@@ -1,0 +1,7 @@
+packages:
+  - client
+  - admin
+  - server
+  - sdk
+  - shared
+  - spikes/*

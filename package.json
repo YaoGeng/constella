@@ -1,0 +1,9 @@
+{
+  "name": "constella",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24"
+  }
+}

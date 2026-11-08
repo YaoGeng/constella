@@ -1,0 +1,5 @@
+{
+  "name": "@constella/shared",
+  "version": "0.0.0",
+  "description": "三端共享类型包：节点定义 DSL / API DTO / zip manifest 单一来源（02 §3.5），只放类型与常量"
+}
