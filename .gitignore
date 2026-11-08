@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules/
+dist/
+out/
+build/
+coverage/
+
+# 环境与日志
+.env
+.env.*
+!.env.example
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# spike 工程：源码不入主干，仅 REPORT.md 证据入库（02 §3.5 / 00-PM A 章）
+spikes/*/*
+!spikes/*/REPORT.md
