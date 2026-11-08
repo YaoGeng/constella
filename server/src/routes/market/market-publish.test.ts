@@ -12,7 +12,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 // 隧道 DB 延迟放大单用例查询轮次——放宽本套件超时（vitest 默认 5s）
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });
 import { randomUUID } from "node:crypto";
-import bcrypt from "bcryptjs";
 import { buildApp } from "../../app.js";
 import { resetRateLimitForTests } from "../../kernel/rate-limit.js";
 import { getStorage } from "../../infra/storage/storage.factory.js";

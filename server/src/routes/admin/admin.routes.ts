@@ -1,16 +1,16 @@
 /**
- * admin 域路由（TDD-S-04 §1 端点表；T2-10）——users 三端点（stats/overview 归 T2-11）。
- * 自挂 authMiddleware → requireAdmin（S-04 §3 admin.routes 行）；装配到 /api/admin 子树在 T2-09
- * （届时子树级守卫与本自挂幂余但无害——如需去重由 T2-09 装配时裁定）。
+ * admin 域路由（TDD-S-04 §1 端点表；T2-10 users/T2-11 stats）。
+ * 鉴权＝装配点注入：T2-09 起 /api/admin/* 子树在 routes/index.ts 统一挂
+ * authMiddleware → requireAdmin 后再挂本域与 review 域路由（S-04 §3 admin.routes 行
+ * 「自挂」已按 T2-09 去重裁定移除——单一守卫源，避免每请求双次 JWT 验证＋双次查库）。
  * role 不入 JWT：requireAdmin 每请求查库，封禁/降权即时生效。
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { authMiddleware } from "../../kernel/auth.middleware.js";
 import { ApiError } from "../../kernel/errors.js";
 import type { AppEnv } from "../../kernel/kernel.js";
-import { requireAdmin } from "./rbac.middleware.js";
 import { banUser, listUsers, unbanUser } from "./user-admin.service.js";
+import { overview } from "./stats.service.js";
 import { banSchema, idParamSchema, usersQuerySchema } from "./admin.schemas.js";
 
 function parseOr400<T>(
@@ -46,11 +46,15 @@ const unbanHandler = async (c: Context<AppEnv>) => {
   return c.json(await unbanUser(id, operator.id), 200);
 };
 
+/** GET /admin/stats/overview —— 看板五计数＋daily7d（T2-11） */
+const statsHandler = async (c: Context<AppEnv>) => {
+  return c.json(await overview(), 200);
+};
+
 const adminRoutes = new Hono<AppEnv>();
-adminRoutes.use("*", authMiddleware);
-adminRoutes.use("*", requireAdmin);
 adminRoutes.get("/users", listHandler);
 adminRoutes.post("/users/:id/ban", banHandler);
 adminRoutes.post("/users/:id/unban", unbanHandler);
+adminRoutes.get("/stats/overview", statsHandler);
 
 export { adminRoutes };

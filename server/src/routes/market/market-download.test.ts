@@ -7,7 +7,6 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import bcrypt from "bcryptjs";
 import { buildApp } from "../../app.js";
 import { resetRateLimitForTests } from "../../kernel/rate-limit.js";
 import { getStorage } from "../../infra/storage/storage.factory.js";

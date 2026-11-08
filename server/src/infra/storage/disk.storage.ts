@@ -10,6 +10,7 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
 import {
+  assertValidStorageKey,
   StorageKeyInvalid,
   StorageNotFound,
   StoragePresignUnsupported,
@@ -44,15 +45,10 @@ export class DiskStorage implements StorageAdapter {
     this.rootDir = path.resolve(rootDir);
   }
 
-  /** 键解析 + 防穿越：拒绝空段/`.`/`..`/反斜杠/绝对键，并二次校验解析结果仍根植于 rootDir */
+  /** 键解析 + 防穿越：段级校验（storage.types 共用规则）＋解析结果二次校验仍根植于 rootDir */
   private resolveObjectPath(key: string): string {
-    if (typeof key !== "string" || key.length === 0 || key.includes("\\")) {
-      throw new StorageKeyInvalid(key);
-    }
+    assertValidStorageKey(key);
     const segments = key.split("/");
-    if (segments.some((s) => s === "" || s === "." || s === "..")) {
-      throw new StorageKeyInvalid(key);
-    }
     const objectPath = path.resolve(this.rootDir, ...segments);
     if (objectPath !== this.rootDir && !objectPath.startsWith(this.rootDir + path.sep)) {
       throw new StorageKeyInvalid(key);

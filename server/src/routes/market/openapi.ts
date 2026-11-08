@@ -3,8 +3,8 @@
  * 方案裁定：hono-openapi 未安装（server/package.json 无该依赖，hono 4.12 亦无内置 ./openapi 导出），
  * 且本批禁新增依赖 → 手写 OpenAPI JSON 路由（零新依赖）；zod schema 保持 plain zod（zod-openapi
  * 兼容写法），后续引入 hono-openapi 时可由 schema 直出替换本组件（组件级接口不变：聚合 /api 全路由）。
- * 覆盖面＝02 §6.2 client↔server + §6.3 admin↔server 全表（admin/review/stats 域装配在 T2-09/11，
- * 契约先行登记——OpenAPI 是契约聚合而非路由探测）。
+ * 覆盖面＝02 §6.2 client↔server + §6.3 admin↔server 全表（admin/review/stats 域已随 T2-09/11 装配，
+ * 契约登记与路由实装对齐——OpenAPI 是契约聚合而非路由探测）。
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../../kernel/kernel.js";
@@ -214,6 +214,18 @@ export const openApiDocument = {
         tags: ["review"], summary: "工作台包详情聚合（manifest 摘要/脚本清单/计量；T2-09 装配）",
         security: bearerAuth, parameters: [idParam],
         responses: { 200: { description: "AdminPackageDetail" }, 401: jsonError(["UNAUTHORIZED"]), 403: jsonError(["FORBIDDEN"]), 404: jsonError(["NOT-FOUND"]) },
+      },
+    },
+    "/admin/packages/{id}/download": {
+      get: {
+        tags: ["review"], summary: "下载预检流（经 S-05 getStream；Content-Disposition attachment；✅ M4 #9 增补行，T2-09 装配）",
+        security: bearerAuth, parameters: [idParam],
+        responses: {
+          200: { description: "zip 流（attachment; filename=\"<semver>.zip\"）", content: { "application/zip": { schema: { type: "string", format: "binary" } } } },
+          401: jsonError(["UNAUTHORIZED"]),
+          403: jsonError(["FORBIDDEN"]),
+          404: jsonError(["NOT-FOUND"]),
+        },
       },
     },
     "/admin/packages/{id}/review": {

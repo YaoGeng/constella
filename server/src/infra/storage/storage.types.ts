@@ -54,3 +54,17 @@ export class StorageKeyInvalid extends Error {
     this.name = "StorageKeyInvalid";
   }
 }
+
+/**
+ * 对象键段级校验（TDD-S-05 §6.1 契约共用——disk 与 s3 同规则拒绝穿越键）：
+ * 拒绝空键/`.`/`..` 段/反斜杠/绝对键。disk 实现另有 resolve 后根植 rootDir 的二次校验。
+ */
+export function assertValidStorageKey(key: string): void {
+  if (typeof key !== "string" || key.length === 0 || key.includes("\\")) {
+    throw new StorageKeyInvalid(key);
+  }
+  const segments = key.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) {
+    throw new StorageKeyInvalid(key);
+  }
+}

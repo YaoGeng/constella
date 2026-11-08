@@ -7,32 +7,10 @@
  */
 import { inflateRawSync } from "node:zlib";
 import type { PermLabel } from "@constella/shared/dto";
+import { BUILTIN_TYPE_IDS, PERM_LABELS } from "@constella/shared/constants";
 import type { PackageManifest } from "@constella/shared/manifest";
 import { ApiError } from "../../kernel/errors.js";
 import { manifestSchema } from "./market.schemas.js";
-
-/**
- * ⚠ 上报（值常量本地冻结副本）：X-01 shared 包 exports 仅含 types 条件（无 import/default），
- * 运行时无法跨包 import 值常量（vitest/vite 解析报 not exported；既有 shared-smoke 仅编译期冒烟）。
- * 以下两集合为封闭冻结集，副本与 X-01 constants 同源逐项一致：
- * - BUILTIN_TYPE_IDS（01 PRD-A4-01 清单冻结 12 type）
- * - PERM_LABELS（六标签封闭集，顺序＝X-01 constants/perms.ts）
- */
-const BUILTIN_TYPE_IDS: readonly string[] = [
-  "trigger.manual",
-  "trigger.cron",
-  "cdp.open",
-  "cdp.extract",
-  "cdp.click",
-  "http.request",
-  "ai.llm",
-  "data.transform",
-  "logic.branch",
-  "delay",
-  "file.write",
-  "human.review",
-];
-const PERM_LABELS: readonly PermLabel[] = ["CDP", "网络", "文件", "AI", "交互", "社媒"];
 
 // ---- 设计值常量（02 §12.2#4）----
 export const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024; // ① zip 总量 ≤20MB（含解压总量上限同值）

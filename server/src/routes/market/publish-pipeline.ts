@@ -10,7 +10,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PermLabel } from "@constella/shared/dto";
 import type { PackageStatus as DtoPackageStatus } from "@constella/shared/dto";
-import { Prisma } from "../../../generated/prisma/client.js";
+import type { Prisma } from "../../../generated/prisma/client.js";
 import { ApiError } from "../../kernel/errors.js";
 import { getStorage } from "../../infra/storage/storage.factory.js";
 import { isUniqueViolation } from "../auth/token.service.js";
