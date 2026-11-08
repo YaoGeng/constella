@@ -1,0 +1,15 @@
+# 依赖目录（可由 npm install 重新生成）
+node_modules
+# 环境变量（避免把账号密码提交到仓库）
+.env
+.env.*
+!.env.example
+
+# Prisma 生成的客户端代码（可由 prisma generate 重新生成）
+/generated/prisma
+# TypeScript 编译输出（可由 npm run build 重新生成）
+dist
+.sisyphus
+
+# Agent customization file（本地配置，不提交到仓库）
+AGENTS.md

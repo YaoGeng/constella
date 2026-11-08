@@ -1,0 +1,56 @@
+{
+  "name": "template",
+  "version": "1.0.0",
+  "description": "Production-ready Hono + Prisma PostgreSQL REST API template",
+  "keywords": ["hono", "prisma", "postgresql", "typescript", "jwt", "rest-api"],
+  "main": "dist/src/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "dev:test": "cross-env APP_ENV=test tsx watch src/index.ts",
+    "dev:prod": "cross-env APP_ENV=prod tsx watch src/index.ts",
+    "start": "node dist/src/index.js",
+    "start:test": "cross-env APP_ENV=test node dist/src/index.js",
+    "start:prod": "cross-env APP_ENV=prod node dist/src/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:test": "cross-env APP_ENV=test prisma migrate dev",
+    "prisma:migrate:prod": "cross-env APP_ENV=prod prisma migrate deploy",
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio",
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@hono/node-server": "^2.0.0",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.2.3",
+    "hono": "^4.12.15",
+    "pg": "^8.16.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.15.6",
+    "cross-env": "^10.1.0",
+    "eslint": "^9.38.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.4.0",
+    "prettier": "^3.6.2",
+    "prisma": "^7.8.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.46.2"
+  }
+}

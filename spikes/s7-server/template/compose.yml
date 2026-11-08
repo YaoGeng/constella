@@ -1,0 +1,64 @@
+# S-7 spike 专用 compose —— 与生产在营产品完全隔离：
+#   独立项目 constella-s7、自带一次性 PG 16（不接 infra 网络、不碰 aim-pg）、
+#   宿主端口仅绑 127.0.0.1:8051、restart=no（spike 不驻留）、内存各限 512M。
+# 对齐部署标准 §6 接入契约（除第 6 条「连 aim-pg」外，spike 用自带 pg）与 §6.1 容器规范
+# （差异：restart 由 unless-stopped 改 no —— spike 红线要求用后即清）。
+name: constella-s7
+
+services:
+  pg:
+    image: postgres:16.14-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: constella_s7
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD must be set in .env}
+      POSTGRES_DB: constella_s7
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [s7net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U constella_s7 -d constella_s7"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  server:
+    build: .
+    image: constella-s7-server:spike
+    restart: "no"
+    env_file: .env
+    environment:
+      APP_ENV: prod
+      NODE_ENV: production
+      PORT: "8051"
+      DATABASE_URL: postgresql://constella_s7:${PG_PASSWORD}@pg:5432/constella_s7?schema=public
+    ports:
+      - "127.0.0.1:8051:8051" # 契约第 1 条：仅绑回环，禁止 0.0.0.0
+    depends_on:
+      pg:
+        condition: service_healthy
+    networks: [s7net]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+
+networks:
+  s7net:
