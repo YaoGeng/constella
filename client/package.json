@@ -20,9 +20,11 @@
     "electron": "45.2.3",
     "esbuild": "0.28.2",
     "typescript": "5.9.3",
-    "vite": "8.3.6"
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
   },
   "dependencies": {
-    "@constella/shared": "workspace:*"
+    "@constella/shared": "workspace:*",
+    "better-sqlite3": "13.0.3"
   }
 }
