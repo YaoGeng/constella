@@ -1,0 +1,20 @@
+// market 域计量明细表（TDD-S-02 §4；T2-05）——DDL 以 02 §7.2 为准。
+// @@index([packageId,ts])＝S-04 七日聚合窗口支撑（03 S-02 §4）；
+// 计数器真值在 Package.downloadCount/installCount（反范式原子 increment），本表=明细留审计。
+// userId 可空（02 §7.2 无关联约束；installs 幂等窗 userId+packageId+day=应用层查重，无唯一约束不擅改锚）。
+
+// 计量类型（02 §7.2 DownloadStat.type）
+enum StatType {
+  DOWNLOAD
+  INSTALL
+}
+
+model DownloadStat {
+  id        String   @id @default(uuid())
+  packageId String
+  userId    String?
+  type      StatType
+  ts        DateTime @default(now())
+
+  @@index([packageId, ts])
+}

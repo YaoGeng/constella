@@ -1,0 +1,21 @@
+// review 域审核留痕表（TDD-S-03 §4；T2-08）——DDL 以 02 §7.2 为准。
+// 每次决策恰一行（幂等由状态机条件更新保证）；OFFLINE 亦留痕（下架留痕）；
+// Package.status 的迁移写权归本域唯一（S-02 仅 publish/再发布置 PENDING）。
+
+// 审核动作（02 §7.2 ReviewRecord.action）
+enum ReviewAction {
+  APPROVE
+  REJECT
+  OFFLINE
+}
+
+model ReviewRecord {
+  id         String       @id @default(uuid())
+  packageId  String
+  package    Package      @relation(fields: [packageId], references: [id])
+  reviewerId String
+  reviewer   User         @relation(fields: [reviewerId], references: [id])
+  action     ReviewAction
+  reason     String?
+  createdAt  DateTime     @default(now())
+}

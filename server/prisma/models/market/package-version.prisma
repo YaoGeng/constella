@@ -1,0 +1,19 @@
+// market 域包版本表（TDD-S-02 §4；T2-05）——DDL 以 02 §7.2 为准。
+// @@unique([packageId,semver])＝D-11 semver 规则的结构面（撞既有→P2002→409 CONFLICT）；
+// manifest=上传包 manifest 原文存档（含 scripts 映射，S-03 工作台摘要源）；
+// 对象键=storageKey（packages/<packageId>/<semver>.zip，02 §5.3）。
+model PackageVersion {
+  id         String    @id @default(uuid())
+  packageId  String
+  package    Package   @relation("PackageVersions", fields: [packageId], references: [id])
+  semver     String // D-11：semver，首发 1.0.0；后续须大于既有最大（应用层校验）
+  storageKey String // 对象存储键
+  checksum   String // zip SHA-256（幂等/校验；形如 "sha256:<hex>"，02 §6.4）
+  sizeBytes  Int
+  manifest   Json // 上传包 manifest 原文
+  createdAt  DateTime  @default(now())
+  // 反向：本版本作为某包 latestVersion 指针（同包内指针；列表形仅 Prisma 建模需要）
+  latestFor  Package[] @relation("LatestVersion")
+
+  @@unique([packageId, semver])
+}

@@ -72,4 +72,6 @@ export interface PublishAccepted {
 /** GET /market/mine → 我发布的包及审核状态（02 §6.2；列表项 + 审核状态） */
 export interface MarketMineItem extends MarketListItem {
   status: PackageStatus;
+  /** 驳回理由（REJECTED 时可见——03 S-02 §1/01 A-13-02；✅ B1 P2 实测增补 2026-11-09：server 已按 03 卡补发，本形追认） */
+  reviewReason?: string | null;
 }

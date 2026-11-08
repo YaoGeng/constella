@@ -1,0 +1,41 @@
+// market 域包主表（TDD-S-02 §4；T2-05）——DDL 以 02 §7.2 为准。
+// @@index([status,kind,updatedAt])＝列表过滤/排序支撑（03 S-02 §4）；
+// perms=反范式推导结果（manifest 类目推导，server 复核存档，02 §12.2#1）；
+// downloadCount/installCount=反范式计数器（update{increment:1} 原子更新，明细行=DownloadStat）。
+
+// 资产类别（02 §7.2 Package.kind；HTTP DTO 小写 node|pack|flow 由路由层映射）
+enum PackageKind {
+  NODE
+  PACK
+  FLOW
+}
+
+// 审核状态机（02 §7.2；迁移写权归 S-03 review 域唯一——S-02 仅 publish/再发布置 PENDING）
+enum PackageStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  OFFLINE
+}
+
+model Package {
+  id              String          @id @default(uuid())
+  kind            PackageKind
+  name            String
+  summary         String?
+  owner           User            @relation(fields: [ownerUserId], references: [id])
+  ownerUserId     String
+  status          PackageStatus   @default(PENDING)
+  perms           String[] // CDP/网络/文件/AI/交互/社媒（六标签封闭集，manifest 类目推导）
+  latestVersionId String?
+  latestVersion   PackageVersion? @relation("LatestVersion", fields: [latestVersionId], references: [id])
+  downloadCount   Int             @default(0)
+  installCount    Int             @default(0)
+  starCount       Int             @default(0) // V1 无评分写入口，恒 0（03 S-02 §8 扩展点②）
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  versions        PackageVersion[] @relation("PackageVersions")
+  reviews         ReviewRecord[]
+
+  @@index([status, kind, updatedAt])
+}
