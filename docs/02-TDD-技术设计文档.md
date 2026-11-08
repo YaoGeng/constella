@@ -7,7 +7,7 @@
 | 作者 | 架构 |
 | 状态 | 已封版（2026-11-08 · 04 §十复审通过） |
 | 依赖 | 00-PM工作安排.md **v1.2**（已封版，范围锚=A 清单 / mock=B 清单 / 验收=E-1~E-12 / 决策=G 章；「评审裁定日志（v1.2）」为本轮返工的权威裁定）；docs/01-PRD-产品需求文档.md（v0.2 定稿，§11 B-13 表态对齐源）；docs/research/技术选型取证-2026-11-08.md（选型证据，版本号与事实仅引此报告）；prototypes/demo.html（v0.5.0-demo，4781 行，事实源）；docs/01a-AI创作推演-mantis五流程.md（v1.0，§9.3/§8.8 事实源——出口数/inner 步数/关键参数/第四态/分支名逐项取自其冻结推演） |
-| 变更记录 | v0.1（2026-11-08）：初版，按 00 v1.1 全量起草，E-1~E-12 自查见第 16 章 → v0.2（2026-11-08）：按 04 评审 §八返工指令修订——X-1（ctx 能力集扩 ctx.net/ctx.file/llm 多模态，00 v1.2 G-2 裁定 ⚠）；X-2/X-10（§9.3 按 01a 冻结口径重写、§8.8 改 G-1/G-2/G-3 登记表、PlanValidator 增第⑥查）；X-3/X-4（failBranch 具名出口+环境级故障豁免+0 值语义）；X-5（io per-exit outputs 声明）；X-8（TDD-C-13 NodeEditor）；X-11（§13.1 降为开发期脚本）；X-13/X-14/X-15/X-16/X-18/X-19/X-20（minor 逐项）；E-8/E-12 自查改通过（附核验说明）→ **v1.0 封版（2026-11-08）**：04 §十复审通过（21 项全核销、blocker=0），N-1/N-2/N-3 编辑性修订随封版完成，N-4 留痕 |
+| 变更记录 | v0.1（2026-11-08）：初版，按 00 v1.1 全量起草，E-1~E-12 自查见第 16 章 → v0.2（2026-11-08）：按 04 评审 §八返工指令修订——X-1（ctx 能力集扩 ctx.net/ctx.file/llm 多模态，00 v1.2 G-2 裁定 ⚠）；X-2/X-10（§9.3 按 01a 冻结口径重写、§8.8 改 G-1/G-2/G-3 登记表、PlanValidator 增第⑥查）；X-3/X-4（failBranch 具名出口+环境级故障豁免+0 值语义）；X-5（io per-exit outputs 声明）；X-8（TDD-C-13 NodeEditor）；X-11（§13.1 降为开发期脚本）；X-13/X-14/X-15/X-16/X-18/X-19/X-20（minor 逐项）；E-8/E-12 自查改通过（附核验说明）→ **v1.0 封版（2026-11-08）**：04 §十复审通过（21 项全核销、blocker=0），N-1/N-2/N-3 编辑性修订随封版完成，N-4 留痕 → **v1.0a 勘误（2026-11-08）**：G1 批 arch-reviewer 评审判定 B 三处勘误——①§3.4 storage:invoke 域枚举补 publish（9 域 31 op，细目锚 03 C-06）②§12.1 env 白名单按 S-4 实证同步（传入块语义+libuv 注入事实）③§7.3 A-3.x「flows.edges JSON」更正为 flow_versions.snapshot；均非范围变化，留痕不开升版 |
 
 阅读约定：⚠ 标记 = 按 00 G 章默认值或本文假设开工，封版前可推翻；「待验证」= research 报告未取证、留给 spike 的项；本文一切版本号/生态事实出自 research 报告（截至 2026-11-08），不另行编造。
 
@@ -241,7 +241,7 @@ flowchart TB
 | `env:cdpProbe` | r→m | `{}` → `{ok,detail}` | CDP 连接真实检测（B-9/B-14：附栈会话探活 + 故障上报） |
 | `shell:openExternal` | r→m | `{url}` → `void` | 外部链接安全打开 |
 | `dialog:openFile` / `dialog:saveFile` | r→m | `{filters}` → `{path}` / `{defaultName}` → `{path}` | zip 导入、导出保存、demo 存档迁移文件选择 |
-| `storage:invoke` | r→m | `{op,args}` → op 白名单结果 | DAO 白名单操作（flows/versions/definitions/library/runs/logs/settings/hits 的枚举方法，见 03 模块设计冻结清单；不接受任意 SQL） |
+| `storage:invoke` | r→m | `{op,args}` → op 白名单结果 | DAO 白名单操作（flows/versions/definitions/library/runs/logs/settings/hits 的枚举方法，见 03 模块设计冻结清单；不接受任意 SQL。**勘误 v1.0a（2026-11-08 G1 评审判定 B）**：白名单实际 **9 域 31 op**，含 `publish` 域 3 op（queue/list/remove，依据 §1.3 待发布队列幂等键+§7.1 pending_publish 表；细目以 03 C-06 卡冻结清单为准）） |
 | `secret:set` / `secret:get` / `secret:del` | r→m | `{key,value?}` → `{ok}` / `{key}` → `{value}` | safeStorage 加密存取（LLM apiKey 等，第 12 章） |
 | `run:spawnScript` | r→m | `{nodeRunId,lang:'py'\|'ts',scriptPath,entry,params,input,configYaml,timeoutMs,retries}` → `{ok,pid}` | 沙箱执行节点脚本（B-2；工作目录/env 白名单在 main 侧构造，见第 12 章） |
 | `run:scriptEvent` | m→r | `{nodeRunId,kind:'stdout'\|'stderr'\|'exit',chunk,code,ms}` | 脚本 stdout/stderr 流式回传与退出结果 |
@@ -529,7 +529,7 @@ model DownloadStat {
 |---|---|---|
 | A-1.3 | 底栏用户身份 | server User（client 本地缓存 profile） |
 | A-2.1/2.2 | 流程切换/新建/重命名/删除 | flows、flow_versions |
-| A-3.x | 画布节点/边 | nodes（x/y/params）+ flows.edges JSON |
+| A-3.x | 画布节点/边 | nodes（x/y/params）+ flows.edges JSON（**勘误 v1.0a（2026-11-08）**：§7.1 flows 表无 edges 列，边数据的唯一落点=flow_versions.snapshot，见 03 C-06 卡 §4 冻结） |
 | A-4.1/4.2 | 12 平台类型 + 9 强节点 | node_definitions（builtin 种子 / custom 示例资产）+ asset_packages |
 | A-4.7 | 八维度自定义节点 | node_definitions N1~N8 字段（8.1） |
 | A-5.4 | 保存即打版本 LIFO 20 | flow_versions.snapshot |
@@ -740,7 +740,7 @@ B-1~B-14 表态**已按 01 v0.2 定稿**：全部「V1 真实实现」；B-13 �
 - **进程模型**：python（用户环境 python ≥3.x，版本待验证 spike S-4）/ node（Electron 45 内嵌 Node v24.22.0，`process.execPath` + `ELECTRON_RUN_AS_NODE=1` 运行 esbuild 转译后的 ts 脚本，不依赖用户系统 Node）。
 - **超时强杀**：N6 timeoutMs → Windows `taskkill /PID <pid> /T /F`（进程树），退出码非 0 记 error。
 - **独立工作目录**：`userData/sandbox/<runId>/<nodeId>/`，内含 config.yaml、scripts 只读挂载（拷贝）、vault.json 工作副本、out/；脚本文件写权限仅限该目录（SDK 路径 API 全部约束到 workdir 内，越界拒绝）。
-- **env 白名单**：子进程 env 仅 `PATH/SYSTEMROOT/TEMP/PYTHONIOENCODING` + 注入 `CONSTELLA_*`（LLM_BASE_URL、LLM_API_KEY=safeStorage 解密后注入、CDP_WS=lane 会话 ws 端点、VAULT_PATH、RUN_ID/NODE_ID）；**不继承** Electron 主进程全量 env。
+- **env 白名单**：子进程 env 仅 `PATH/SYSTEMROOT/TEMP/PYTHONIOENCODING` + 注入 `CONSTELLA_*`（LLM_BASE_URL、LLM_API_KEY=safeStorage 解密后注入、CDP_WS=lane 会话 ws 端点、VAULT_PATH、RUN_ID/NODE_ID）；**不继承** Electron 主进程全量 env。**勘误 v1.0a（2026-11-08，按 spike S-4 实证同步，G1 评审判定 B）**：白名单修正为「传入 env 块 = `SystemRoot/TEMP/TMP/PATHEXT/ComSpec` + `CONSTELLA_*`（含 CTX=脚本上下文 JSON，S-5 ③；PATH 如需管控须显式覆盖；PYTHONIOENCODING 由 `-X utf8` 形参取代）；Windows 宿主（libuv）会强制注入 11 个系统变量且不可关闭，判据按『传入 env 块』语义断言」——S-4 REPORT 19/19 实证。
 - **ctx.net / ctx.file 沙箱白名单与权限类目联动（00 v1.2 G-2 裁定 ⚠，X-1）**：`ctx.net` 的 HTTP 请求一律经 **main 进程网络代理**执行（子进程无直连出网能力）；**域名白名单来自节点 N1 权限类目**（manifest「网络」类目声明 → 发布 perms 推导同源，12.2 第 1 条），白名单外域名**默认拒绝**（拒绝默认放行，拒绝事件日志可见）。`ctx.file` 的读写范围**限定为该节点本次运行的沙箱工作目录**（`sandbox/<runId>/<nodeId>/`），路径逃逸（`../` 穿越、绝对路径、symlink 跟随）一律拒绝——与既有「SDK 路径 API 全部约束到 workdir 内」同一执行点。
 - **降级路径**：python 未安装 → 试跑/运行前检测并提示（节点级「执行环境缺失」错误，不崩溃）；esbuild 不可用 → ts 节点降级为「仅预览不可执行」标记；杀进程失败 → 孤儿进程检测（runId 标记 + 启动清扫）。
 - 纵深：沙箱是 zip 三级防护之后的第四道（12.2），不是唯一防线；容器隔离（gVisor/Docker）登记为 Vx 扩展点。
