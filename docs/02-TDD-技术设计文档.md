@@ -7,7 +7,7 @@
 | 作者 | 架构 |
 | 状态 | 已封版（2026-11-08 · 04 §十复审通过） |
 | 依赖 | 00-PM工作安排.md **v1.2**（已封版，范围锚=A 清单 / mock=B 清单 / 验收=E-1~E-12 / 决策=G 章；「评审裁定日志（v1.2）」为本轮返工的权威裁定）；docs/01-PRD-产品需求文档.md（v0.2 定稿，§11 B-13 表态对齐源）；docs/research/技术选型取证-2026-11-08.md（选型证据，版本号与事实仅引此报告）；prototypes/demo.html（v0.5.0-demo，4781 行，事实源）；docs/01a-AI创作推演-mantis五流程.md（v1.0，§9.3/§8.8 事实源——出口数/inner 步数/关键参数/第四态/分支名逐项取自其冻结推演） |
-| 变更记录 | v0.1（2026-11-08）：初版，按 00 v1.1 全量起草，E-1~E-12 自查见第 16 章 → v0.2（2026-11-08）：按 04 评审 §八返工指令修订——X-1（ctx 能力集扩 ctx.net/ctx.file/llm 多模态，00 v1.2 G-2 裁定 ⚠）；X-2/X-10（§9.3 按 01a 冻结口径重写、§8.8 改 G-1/G-2/G-3 登记表、PlanValidator 增第⑥查）；X-3/X-4（failBranch 具名出口+环境级故障豁免+0 值语义）；X-5（io per-exit outputs 声明）；X-8（TDD-C-13 NodeEditor）；X-11（§13.1 降为开发期脚本）；X-13/X-14/X-15/X-16/X-18/X-19/X-20（minor 逐项）；E-8/E-12 自查改通过（附核验说明）→ **v1.0 封版（2026-11-08）**：04 §十复审通过（21 项全核销、blocker=0），N-1/N-2/N-3 编辑性修订随封版完成，N-4 留痕 → **v1.0a 勘误（2026-11-08）**：G1 批 arch-reviewer 评审判定 B 三处勘误——①§3.4 storage:invoke 域枚举补 publish（9 域 31 op，细目锚 03 C-06）②§12.1 env 白名单按 S-4 实证同步（传入块语义+libuv 注入事实）③§7.3 A-3.x「flows.edges JSON」更正为 flow_versions.snapshot；均非范围变化，留痕不开升版 |
+| 变更记录 | v0.1（2026-11-08）：初版，按 00 v1.1 全量起草，E-1~E-12 自查见第 16 章 → v0.2（2026-11-08）：按 04 评审 §八返工指令修订——X-1（ctx 能力集扩 ctx.net/ctx.file/llm 多模态，00 v1.2 G-2 裁定 ⚠）；X-2/X-10（§9.3 按 01a 冻结口径重写、§8.8 改 G-1/G-2/G-3 登记表、PlanValidator 增第⑥查）；X-3/X-4（failBranch 具名出口+环境级故障豁免+0 值语义）；X-5（io per-exit outputs 声明）；X-8（TDD-C-13 NodeEditor）；X-11（§13.1 降为开发期脚本）；X-13/X-14/X-15/X-16/X-18/X-19/X-20（minor 逐项）；E-8/E-12 自查改通过（附核验说明）→ **v1.0 封版（2026-11-08）**：04 §十复审通过（21 项全核销、blocker=0），N-1/N-2/N-3 编辑性修订随封版完成，N-4 留痕 → **v1.0a 勘误（2026-11-08）**：G1 批 arch-reviewer 评审判定 B 三处勘误——①§3.4 storage:invoke 域枚举补 publish（9 域 31 op，细目锚 03 C-06）②§12.1 env 白名单按 S-4 实证同步（传入块语义+libuv 注入事实）③§7.3 A-3.x「flows.edges JSON」更正为 flow_versions.snapshot；均非范围变化，留痕不开升版 → **v1.0b 勘误（2026-11-08）**：M4 收口评审判定 B×2——④§3.4 zip:import 改两段式+zip:export 补发布打包变体（锚 03 C-08 卡，通道数不变）⑤§13.3 恢复出厂确认改应用内弹窗（通道面冻结 24 通道所致，锚 03 C-11 卡）；同为勘误级 |
 
 阅读约定：⚠ 标记 = 按 00 G 章默认值或本文假设开工，封版前可推翻；「待验证」= research 报告未取证、留给 spike 的项；本文一切版本号/生态事实出自 research 报告（截至 2026-11-08），不另行编造。
 
@@ -253,7 +253,7 @@ flowchart TB
 | `cdp:destroyRun` | r→m | `{runId}` → `{ok}` | 任务收尾统一销毁会话 |
 | `cron:upsert` / `cron:cancel` | r→m | `{flowId,cron}` / `{flowId}` → `{ok}` | trigger.cron 真实调度（D-5 ⚠：应用运行期间生效） |
 | `cron:fired` | m→r | `{flowId}` → 事件 | cron 到点触发 startRun（含脏闸与同流程不重复跑检查） |
-| `zip:export` / `zip:import` | r→m | `{flowId,savePath}` → `{file,count,scripts}` / `{path}` → `{nodes[],noScript[]}` | zip 落盘与解包（jszip；安全校验在 main） |
+| `zip:export` / `zip:import` | r→m | `{flowId,savePath}` → `{file,count,scripts}` / `{path}` → `{nodes[],noScript[]}` | zip 落盘与解包（jszip；安全校验在 main）。**勘误 v1.0b（2026-11-08 M4 收口评审判定 B）**：与 §12.2#2「未确认不入库」不可兼得——`zip:import` 冻结为**两段式**（inspect `{path}` → 清单+token → confirm `{token}` → 入库；细目以 03 C-08 卡为准）；`zip:export` 补**发布打包变体** `{types[],savePath,meta}`（checksum=SHA-256 幂等键）。通道数不变（仍 24），payload 细目随 X-01 同步 |
 | `app:confirmClose` | m→r | `{}` → `{dirty}` | 关窗前脏检查（原生确认） |
 
 HTTP（广场/账号）不经 IPC：renderer `fetch` 直连 server，server 对 `app://` origin 配 CORS（中间件见 5.1 MW，安全细节见 12.3）。
@@ -794,7 +794,7 @@ B-1~B-14 表态**已按 01 v0.2 定稿**：全部「V1 真实实现」；B-13 �
 
 - 版本快照：flow_versions.snapshot JSON（nodes+edges 全量克隆，demo 语义），恢复 = 克隆回画布呈 dirty 可撤销。
 - 备份：schema 迁移执行前自动复制 `constella.db` → `userData/backups/pre-v<N>-<date>.db`（保留最近 5 份，设计值）；资产目录不自动备份（可由 node-types hash 重新校验）。⚠ 云同步延后（D-6）。
-- 恢复出厂（A-14.3 危险区）：确认对话框（原生）→ 删库 + 清 node-types/sandbox/backups → 重种 → 重启。
+- 恢复出厂（A-14.3 危险区）：确认对话框（**勘误 v1.0b（2026-11-08）：应用内二次确认弹窗**——通道面已冻结 24 通道无原生 confirm 通道，01 A-14.3「二次确认弹窗保留」语义不变）→ 删库 + 清 node-types/sandbox/backups → 重种 → 重启。
 
 ---
 
