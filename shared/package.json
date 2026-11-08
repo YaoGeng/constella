@@ -7,22 +7,34 @@
   "sideEffects": false,
   "exports": {
     "./dsl": {
-      "types": "./src/dsl/index.ts"
+      "types": "./src/dsl/index.ts",
+      "import": "./src/dsl/index.ts",
+      "default": "./src/dsl/index.ts"
     },
     "./manifest": {
-      "types": "./src/manifest/index.ts"
+      "types": "./src/manifest/index.ts",
+      "import": "./src/manifest/index.ts",
+      "default": "./src/manifest/index.ts"
     },
     "./dto": {
-      "types": "./src/dto/index.ts"
+      "types": "./src/dto/index.ts",
+      "import": "./src/dto/index.ts",
+      "default": "./src/dto/index.ts"
     },
     "./ipc": {
-      "types": "./src/ipc/index.ts"
+      "types": "./src/ipc/index.ts",
+      "import": "./src/ipc/index.ts",
+      "default": "./src/ipc/index.ts"
     },
     "./constants": {
-      "types": "./src/constants/index.ts"
+      "types": "./src/constants/index.ts",
+      "import": "./src/constants/index.ts",
+      "default": "./src/constants/index.ts"
     },
     "./settings": {
-      "types": "./src/settings/index.ts"
+      "types": "./src/settings/index.ts",
+      "import": "./src/settings/index.ts",
+      "default": "./src/settings/index.ts"
     }
   },
   "scripts": {
