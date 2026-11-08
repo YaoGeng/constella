@@ -4,3 +4,14 @@ packages:
   - server
   - sdk
   - shared
+
+# pnpm 12 构建脚本白名单（实测键名=allowBuilds；pnpm 10/11 的 onlyBuiltDependencies 不生效于本拦截面）。
+# S-2 ③ 脚手架注意原文按 onlyBuiltDependencies 登记，此为 pnpm 12 实测更正——已留痕 05 §4。
+# electron 45 npm 包无 postinstall（二进制懒下载走显式 install.js，client/README.dev.md）；esbuild/prisma 系需 postinstall；better-sqlite3 原生编译随 P1 波。
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  better-sqlite3: true
+  electron: true
+  esbuild: true
+  prisma: true

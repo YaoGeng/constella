@@ -1,0 +1,15 @@
+// Prisma Schema — 定义数据模型与生成器配置
+// 同步修改后需执行 npm run prisma:generate 重新生成客户端
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"  // 生成的 Prisma Client 输出目录
+  runtime  = "nodejs"               // Node 运行时（模板缺省项，spike 补）
+  moduleFormat            = "esm"   // 与 package.json "type":"module" 对齐（spike 补）
+  importFileExtension     = "js"   // 生成代码内部 import 带 .js（映射 .ts 源），tsc 编译后 node ESM 可直跑（spike 修复）
+}
+
+datasource db {
+  provider = "postgresql"
+  // 不在此处配置 url — Prisma v7 通过 prisma.config.ts 的 env("DATABASE_URL") 读取
+}

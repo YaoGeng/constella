@@ -1,5 +1,35 @@
 {
   "name": "@constella/shared",
   "version": "0.0.0",
-  "description": "三端共享类型包：节点定义 DSL / API DTO / zip manifest 单一来源（02 §3.5），只放类型与常量"
+  "description": "三端共享类型包：节点定义 DSL / API DTO / zip manifest 单一来源（02 §3.5），只放类型与常量",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./dsl": {
+      "types": "./src/dsl/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest/index.ts"
+    },
+    "./dto": {
+      "types": "./src/dto/index.ts"
+    },
+    "./ipc": {
+      "types": "./src/ipc/index.ts"
+    },
+    "./constants": {
+      "types": "./src/constants/index.ts"
+    },
+    "./settings": {
+      "types": "./src/settings/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
 }

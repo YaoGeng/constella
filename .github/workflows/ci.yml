@@ -1,0 +1,38 @@
+# T0-10 CI 骨架（蓝本=spikes/s7-server/ci/server-ci.yml，S-7 服务器实测）
+# 仓库推送 GitHub 须用户确认——本文件仅落位并本地等价验证（与 CI 步骤同命令），不执行任何 git push。
+# server 镜像构建/compose 冒烟不在 P0 骨架范围（蓝本 job 保留于 spikes/ 供 P6 部署卡复用）。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-typecheck-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        # 版本读 package.json packageManager 字段（pnpm@12.11.2）
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Prisma generate (server)
+        env:
+          # Prisma 7 的 prisma.config.ts 顶层求值要求 DATABASE_URL 存在；generate 不连库，占位即可（S-7 同口径）
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+        run: pnpm -F ./server exec prisma generate
+      - name: Electron binary install (client)
+        # electron 45 npm 包无 postinstall、二进制懒下载（T0-08 同口径）；
+        # 国内网络可设 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/（本注释口径与 client/README.dev.md 一致）
+        run: node client/node_modules/electron/install.js
+      - name: Lint
+        run: pnpm -r --if-present lint
+      - name: Typecheck
+        run: pnpm -r --if-present typecheck
+      - name: Build
+        run: pnpm -r --if-present build

@@ -1,5 +1,28 @@
 {
   "name": "@constella/client",
   "private": true,
-  "version": "0.0.0"
+  "version": "0.0.0",
+  "description": "Constella 桌面客户端（Electron main / preload / renderer 三目录，T0-08 / TDD-C-M1）",
+  "main": "dist/main/index.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node esbuild.mjs && vite build && electron .",
+    "build": "node esbuild.mjs && vite build",
+    "typecheck": "tsc --noEmit",
+    "start": "electron .",
+    "notices": "node scripts/gen-notices.mjs",
+    "install:electron": "node node_modules/electron/install.js"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "electron": "45.2.3",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "vite": "8.3.6"
+  },
+  "dependencies": {
+    "@constella/shared": "workspace:*"
+  }
 }
