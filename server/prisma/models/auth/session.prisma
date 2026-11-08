@@ -1,12 +1,13 @@
 // 用户会话 / Refresh Token 模型
+// C4（T2-02，TDD-S-01 §4）：tokenHash 改 @unique（02 §7.2）——封堵并发轮换竞态的结构面
+// （行为验证随 T2-03 §6.1d：并发双 refresh 同 token 恰一 200 + 一 401）
 model RefreshToken {
   id        String   @id @default(uuid())  // 主键
-  tokenHash String                         // Refresh Token 的 SHA256 哈希（原始令牌仅存于客户端）
+  tokenHash String   @unique               // Refresh Token 的 SHA256 哈希（原始令牌仅存于客户端）
   userId    String                         // 所属用户 ID
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime                       // 过期时间
   createdAt DateTime @default(now())
 
   @@index([userId])     // 按用户 ID 快速查找
-  @@index([tokenHash])  // 按令牌哈希快速查找（refresh 时查询）
 }

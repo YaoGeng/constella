@@ -1,27 +1,24 @@
 /**
- * 用户业务路由。
- * 当前包含：GET /user/profile — 获取当前登录用户信息（JWT 保护）。
+ * user 域路由（TDD-S-01 §1 端点表 user 行；T2-04）。
+ * GET /api/user/profile：requireActiveUser（kernel——JWT sub→prisma 查，不存在/BANNED→401 封禁即时生效）。
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { authMiddleware } from "../auth/auth.middleware.js";
-import { prisma } from "../../utils/prisma.js";
+import type { AppEnv } from "../../kernel/kernel.js";
+import { requireActiveUser } from "../../kernel/auth.middleware.js";
+import { toUserProfile } from "../../kernel/user.js";
 
-/** 获取当前用户信息：解析 JWT payload 中的 sub → 查询用户 → 返回（不含 passwordHash） */
-const getCurrentUser = async (c: Context) => {
-  // 从 JWT 中间件提取已解码的 payload
-  const jwtPayload = c.get("jwtPayload") as { sub: string; email: string; exp: number };
-  const user = await prisma.user.findUnique({ where: { id: jwtPayload.sub } });
-
-  if (!user) {
-    return c.json({ error: "User not found" }, 401);
-  }
-
-  return c.json({ id: user.id, email: user.email, createdAt: user.createdAt }, 200);
+/** 资料端点：{user:{id,email,role,isAuthor,createdAt}}（S-01 端点表；UserProfile 超集） */
+const getProfile = async (c: Context<AppEnv>) => {
+  const user = c.get("currentUser");
+  return c.json(
+    { user: { ...toUserProfile(user), isAuthor: user.isAuthor, createdAt: user.createdAt.toISOString() } },
+    200,
+  );
 };
 
-/** 用户子路由：/profile 需要 Bearer JWT 认证 */
-const userRoutes = new Hono();
-userRoutes.get("/profile", authMiddleware, getCurrentUser);
+/** 用户子路由：/profile 需有效且未封禁的 Bearer JWT */
+const userRoutes = new Hono<AppEnv>();
+userRoutes.get("/profile", requireActiveUser, getProfile);
 
 export { userRoutes };

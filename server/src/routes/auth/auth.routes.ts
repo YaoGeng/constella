@@ -1,151 +1,82 @@
+/**
+ * auth 域路由（TDD-S-01 §1 端点表；T2-03：C1/C2/C6 落点）。
+ * register → 201 {user:{id,email,role}}（不含令牌对；C1）；
+ * login → 200 {accessToken,refreshToken,user}（BANNED → 401 ADMIN-USER-BANNED）；
+ * refresh → 200 新对（一次性轮换；TokenService.rotate 含 C4 并发防护）。
+ * 统一错误体由 kernel onError 渲染（C2）；错误经 ApiError 抛出。
+ */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { sign } from "hono/utils/jwt/jwt";
 import bcrypt from "bcryptjs";
-import { createHash, randomUUID } from "node:crypto";
+import type { ZodType } from "zod";
+import type { AppEnv } from "../../kernel/kernel.js";
+import { ApiError } from "../../kernel/errors.js";
+import { toUserProfile } from "../../kernel/user.js";
 import { prisma } from "../../utils/prisma.js";
-import { env } from "../../utils/env.js";
-import { registerSchema, loginSchema, refreshSchema } from "./auth.schemas.js";
-/** RefreshToken 有效期：7 天（毫秒） */
-const REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+import { loginSchema, refreshSchema, registerSchema } from "./auth.schemas.js";
+import { DUMMY_COMPARE_HASH, isUniqueViolation, issueTokenPair, rotate } from "./token.service.js";
 
-/** 生成 Access Token（JWT），有效期 15 分钟 */
-async function generateAccessToken(user: { id: string; email: string }): Promise<string> {
-  const exp = Math.floor(Date.now() / 1000) + 15 * 60;
-  return sign({ sub: user.id, email: user.email, exp }, env.JWT_SECRET);
-}
-
-/** 生成原始 Refresh Token（UUID 拼接，明文返回客户端） */
-function generateRefreshTokenString(): string {
-  return randomUUID() + "-" + randomUUID();
-}
-
-/** 将 Refresh Token SHA256 哈希后存入数据库（原始令牌永不被持久化） */
-function hashRefreshToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-/** 注册处理器：校验入参 → 检查邮箱重复 → bcrypt 哈希 → 创建用户 → 签发令牌对 */
-const registerHandler = async (c: Context) => {
-  const parseResult = registerSchema.safeParse(await c.req.json());
-  if (!parseResult.success) {
-    return c.json({ error: "Invalid input" }, 400);
+/** 解析请求体：非法 JSON 一律按校验失败处理（VALIDATION-FAILED） */
+async function parseBody<T>(schema: ZodType<T>, c: Context<AppEnv>): Promise<T> {
+  const json: unknown = await c.req.json().catch(() => undefined);
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    throw new ApiError("VALIDATION-FAILED");
   }
+  return parsed.data;
+}
 
-  const body = parseResult.data;
-
-  // 邮箱唯一性检查
-  const existing = await prisma.user.findUnique({ where: { email: body.email } });
-  if (existing) {
-    return c.json({ error: "Email already registered" }, 409);
-  }
-
-  // bcrypt 加盐哈希，成本因子 10
+/** 注册：校验 → bcrypt(10) → create（C6：catch P2002 → 409 AUTH-EMAIL-TAKEN；role/status 走 DB 默认） */
+const registerHandler = async (c: Context<AppEnv>) => {
+  const body = await parseBody(registerSchema, c);
   const passwordHash = await bcrypt.hash(body.password, 10);
-  const user = await prisma.user.create({
-    data: { email: body.email, passwordHash },
-  });
-
-  // 签发令牌对
-  const accessToken = await generateAccessToken(user);
-  const refreshToken = generateRefreshTokenString();
-  const tokenHash = hashRefreshToken(refreshToken);
-
-  // 存储哈希后的 RefreshToken（原始令牌仅返回客户端，服务端不可逆）
-  await prisma.refreshToken.create({
-    data: {
-      tokenHash,
-      userId: user.id,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRY_MS),
-    },
-  });
-
-  return c.json({ accessToken, refreshToken }, 201);
+  let user;
+  try {
+    user = await prisma.user.create({ data: { email: body.email, passwordHash } });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new ApiError("AUTH-EMAIL-TAKEN");
+    }
+    throw err;
+  }
+  return c.json({ user: toUserProfile(user) }, 201);
 };
 
-/** 登录处理器：校验入参 → 查找用户 → 防时序攻击的 dummy 哈希 → 密码比对 → 签发令牌对 */
-const loginHandler = async (c: Context) => {
-  const parseResult = loginSchema.safeParse(await c.req.json());
-  if (!parseResult.success) {
-    return c.json({ error: "Invalid input" }, 400);
-  }
-
-  const body = parseResult.data;
+/** 登录：校验 → 查用户（缺失走 dummy compare 防时序探测）→ 密码比对 → BANNED 检查 → 签发令牌对 */
+const loginHandler = async (c: Context<AppEnv>) => {
+  const body = await parseBody(loginSchema, c);
   const user = await prisma.user.findUnique({ where: { email: body.email } });
 
-  // 用户不存在时执行 dummy bcrypt compare，防止通过响应时间推断邮箱是否存在
   if (!user) {
-    await bcrypt.compare(body.password, "$2a$10$dummyHashForTiming");
-    return c.json({ error: "Invalid email or password" }, 401);
+    await bcrypt.compare(body.password, DUMMY_COMPARE_HASH);
+    throw new ApiError("AUTH-INVALID-CREDENTIALS");
   }
 
-  // 比对密码哈希
   const valid = await bcrypt.compare(body.password, user.passwordHash);
   if (!valid) {
-    return c.json({ error: "Invalid email or password" }, 401);
+    throw new ApiError("AUTH-INVALID-CREDENTIALS");
   }
 
-  // 签发令牌对
-  const accessToken = await generateAccessToken(user);
-  const refreshToken = generateRefreshTokenString();
-  const tokenHash = hashRefreshToken(refreshToken);
+  if (user.status === "BANNED") {
+    throw new ApiError("ADMIN-USER-BANNED");
+  }
 
-  await prisma.refreshToken.create({
-    data: {
-      tokenHash,
-      userId: user.id,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRY_MS),
-    },
-  });
-
-  return c.json({ accessToken, refreshToken }, 200);
+  const pair = await issueTokenPair(user);
+  return c.json({ ...pair, user: toUserProfile(user) }, 200);
 };
 
-/** Refresh 处理器：校验入参 → SHA256 查找 → 删除旧令牌 → 颁发新令牌对（令牌轮换） */
-const refreshHandler = async (c: Context) => {
-  const parseResult = refreshSchema.safeParse(await c.req.json());
-  if (!parseResult.success) {
-    return c.json({ error: "Invalid input" }, 400);
+/** 刷新：一次性轮换（并发防护在 TokenService.rotate——deleteMany 抢占 + insert P2002 兜底） */
+const refreshHandler = async (c: Context<AppEnv>) => {
+  const body = await parseBody(refreshSchema, c);
+  const result = await rotate(body.refreshToken);
+  if (!result.ok) {
+    throw new ApiError(result.code);
   }
-
-  const body = parseResult.data;
-  // 将客户端传来的 Refresh Token 哈希后查库
-  const tokenHash = hashRefreshToken(body.refreshToken);
-
-  const storedToken = await prisma.refreshToken.findFirst({
-    where: { tokenHash, expiresAt: { gt: new Date() } },
-  });
-
-  if (!storedToken) {
-    return c.json({ error: "Invalid or expired refresh token" }, 401);
-  }
-
-  // 删除旧令牌（单次使用，轮换后立即失效）
-  await prisma.refreshToken.delete({ where: { id: storedToken.id } });
-
-  const user = await prisma.user.findUnique({ where: { id: storedToken.userId } });
-  if (!user) {
-    return c.json({ error: "Invalid or expired refresh token" }, 401);
-  }
-
-  // 颁发新的令牌对
-  const accessToken = await generateAccessToken(user);
-  const refreshToken = generateRefreshTokenString();
-  const newTokenHash = hashRefreshToken(refreshToken);
-
-  await prisma.refreshToken.create({
-    data: {
-      tokenHash: newTokenHash,
-      userId: user.id,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRY_MS),
-    },
-  });
-
-  return c.json({ accessToken, refreshToken }, 200);
+  return c.json({ ...result.pair, user: toUserProfile(result.user) }, 200);
 };
 
-/** 公开认证路由：/register、/login、/refresh */
-const authRoutes = new Hono();
+/** 公开认证路由：/register、/login、/refresh（鉴权需求随 S-02+ 域在 kernel 扩展） */
+const authRoutes = new Hono<AppEnv>();
 authRoutes.post("/register", registerHandler);
 authRoutes.post("/login", loginHandler);
 authRoutes.post("/refresh", refreshHandler);

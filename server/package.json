@@ -25,6 +25,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
+    "test": "vitest run",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:test": "cross-env APP_ENV=test prisma migrate dev",
     "prisma:migrate:prod": "cross-env APP_ENV=prod prisma migrate deploy",

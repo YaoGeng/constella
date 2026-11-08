@@ -38,13 +38,20 @@ if (!process.env.NODE_ENV) {
 }
 
 // Zod schema：统一校验所有环境变量
+// C8（T2-01）：删除 refresh 签名密钥项（refresh 非 JWT、未使用——S-7 剥离）；
+// PORT 默认 4399→8051（部署标准 §2.3）；增 CORS_ORIGINS（K3）与存储项（TDD-S-05 §1 env 表）
 const envSchema = z.object({
   APP_ENV: appEnvSchema.default("dev"),
   NODE_ENV: nodeEnvSchema.default("development"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
-  JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
-  PORT: z.coerce.number().default(4399),
+  PORT: z.coerce.number().default(8051),
+  // 逗号分隔来源列表；client HTTP 直连（02 §3.4 注），默认 app://
+  CORS_ORIGINS: z.string().min(1).default("app://"),
+  // 对象存储（TDD-S-05）：disk 生产默认（03 §7.3#1）；s3 随 T2-13 落地
+  STORAGE_DRIVER: z.enum(["disk", "s3"]).default("disk"),
+  // disk 目录（server 工作目录下 storage/，02 §5.3 记法）
+  STORAGE_DIR: z.string().min(1).default("storage"),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
