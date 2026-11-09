@@ -11,9 +11,10 @@
 //   - 观测按 code 不按 signal（S-4 ③——signal 名 Windows 不可依赖）；code 权威值由
 //     SandboxExecutor 持有的 child 'close' 事件承载，本组件 ExitInfo 只报存活/超时/耗时。
 //
-// 强杀本体=ProcessKiller（T4-17：taskkill /T /F＋杀后复查 KillReport）——本卡以最小 taskkill
-// 执行＋killTree 注入位留好（deps.killTree），T4-17 换装不改触发位。
+// 强杀本体=ProcessKiller（T4-17：taskkill /T /F＋杀后复查 KillReport）——缺省注入位已换装
+// ProcessKiller（S-4 ① 复查面）；deps.killTree 仍为测试/定制注入缝，返回值容 KillReport。
 import { spawn } from 'node:child_process';
+import { ProcessKiller } from './process-killer';
 
 /** arm 观测结果（退出码权威面=SandboxExecutor child close；见文件头） */
 export interface ExitInfo {
@@ -24,10 +25,10 @@ export interface ExitInfo {
   ms: number;
 }
 
-/** 树杀面（T4-17 ProcessKiller.killTree 换装位——缺省最小 taskkill /T /F，无复查） */
-export type KillTreeFn = (pid: number) => Promise<void>;
+/** 树杀面（T4-17 ProcessKiller.killTree 已换装缺省——返回 KillReport 亦可注入；void 形兼容） */
+export type KillTreeFn = (pid: number) => Promise<unknown>;
 
-/** 最小树杀（win32 冻结形参；失败吞没——清扫面由调用方复查〔T4-17〕） */
+/** 最小树杀（win32 冻结形参；无复查——独立最小面，SandboxExecutor/Watchdog 缺省走 ProcessKiller） */
 export async function taskkillTree(pid: number): Promise<void> {
   await new Promise<void>((resolve) => {
     const p = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
@@ -38,6 +39,9 @@ export async function taskkillTree(pid: number): Promise<void> {
     p.on('error', () => resolve());
   });
 }
+
+/** 缺省树杀体（ProcessKiller——S-4 ① 杀后复查；模块级单例，arm 多次复用） */
+const defaultProcessKiller = new ProcessKiller();
 
 /** 存活探测（signal 0；ESRCH=已退） */
 function isAlive(pid: number): boolean {
@@ -51,7 +55,7 @@ function isAlive(pid: number): boolean {
 
 /** 构造依赖 */
 export interface WatchdogDeps {
-  /** 树杀实现（缺省=taskkillTree；T4-17 ProcessKiller 换装位） */
+  /** 树杀实现（缺省=ProcessKiller.killTree——T4-17 换装：taskkill /T /F＋杀后复查） */
   killTree?: KillTreeFn;
   /** 存活轮询间隔（缺省 50ms；测试可收紧） */
   pollIntervalMs?: number;
@@ -69,7 +73,7 @@ export class Watchdog {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       return Promise.reject(new Error(`Watchdog.arm：非法 timeoutMs（≤0 须由调用方不武装——N6 0 值语义）: ${timeoutMs}`));
     }
-    const killTree = this.deps.killTree ?? taskkillTree;
+    const killTree = this.deps.killTree ?? ((pid: number) => defaultProcessKiller.killTree(pid));
     const pollMs = this.deps.pollIntervalMs ?? 50;
     const startedAt = Date.now();
     return new Promise<ExitInfo>((resolve) => {
@@ -91,8 +95,11 @@ export class Watchdog {
       timer = setTimeout(() => {
         if (settled) return;
         timedOut = true;
-        // 触发树杀（T4-17 ProcessKiller 换装位）；杀后退出确认仍由轮询观测（taskkill 异步生效）
-        void killTree(pid).catch(() => undefined);
+        // 触发树杀（缺省=ProcessKiller：taskkill /T /F＋杀后复查）；杀后退出确认仍由轮询观测
+        void killTree(pid).catch((err) => {
+          // T4-16 评审移交③（静默丢弃面补 warn）：树杀失败留痕——孤儿清扫兜底面数据源
+          console.error('[constella-watchdog] 超时树杀失败（孤儿清扫面兜底）:', err);
+        });
       }, timeoutMs);
       timer.unref?.();
     });

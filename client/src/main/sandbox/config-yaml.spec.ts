@@ -1,6 +1,7 @@
 // configYaml 解析/合并用例（T4-16 / TDD-C-M1 §3「configYaml 合并语义」＋02 §14 冻结覆盖序——
 // yaml 解析收窄 SandboxExecutor 单点，本规格=该单点的函数面）。
 import { describe, expect, it } from 'vitest';
+import { IPC_ERROR_CODES } from '@constella/shared/ipc';
 import { ConfigYamlError, mergeParams, parseConfigYaml } from './config-yaml';
 
 describe('parseConfigYaml（子集解析——无三方依赖单点）', () => {
@@ -40,6 +41,19 @@ describe('parseConfigYaml（子集解析——无三方依赖单点）', () => {
     expect(() => parseConfigYaml('- one\n- two')).toThrow(ConfigYamlError);
     expect(() => parseConfigYaml('just a line')).toThrow(ConfigYamlError);
     expect(() => parseConfigYaml('tags: [a, b]')).toThrow(ConfigYamlError);
+  });
+
+  it('错误码已登记 X-01 错误码集（T4-16 🟡 裁决落地＝登记制：code=CONFIG-YAML-INVALID ∈ IPC_ERROR_CODES——yaml 解析错误对用户可操作，不走 INTERNAL）', () => {
+    // T4-20 携带登记项 2：裁决采「登记入 X-01 错误码集（shared 最小增补）」
+    expect(IPC_ERROR_CODES.CONFIG_YAML_INVALID).toBe('CONFIG-YAML-INVALID');
+    let caught: unknown;
+    try {
+      parseConfigYaml('a: b: c');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ConfigYamlError);
+    expect((caught as ConfigYamlError).code).toBe('CONFIG-YAML-INVALID');
   });
 });
 

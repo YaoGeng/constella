@@ -131,3 +131,28 @@ export interface ElectronApi {
   shell: ShellLike;
   ipcMain: IpcMainLike;
 }
+
+/**
+ * 真实 electron dialog → DialogLike 适配（owner 窗缺省时走无窗重载——Electron 重载须显式分派；
+ * 生产装配 main/index.ts 与 T4-20 头跑宿主共用。窄 cast 安全：运行时窗口对象即真实
+ * BrowserWindow，AppRuntime 只消费 Like 子集）。
+ */
+export function adaptElectronDialog(
+  d: {
+    showMessageBox: (winOrOptions: never, options?: never) => Promise<MessageBoxResult>;
+    showOpenDialog: (winOrOptions: never, options?: never) => Promise<{ canceled: boolean; filePaths: string[] }>;
+    showSaveDialog: (
+      winOrOptions: never,
+      options?: never,
+    ) => Promise<{ canceled: boolean; filePath?: string }>;
+  },
+): DialogLike {
+  return {
+    showMessageBox: (win, options) =>
+      win !== undefined ? d.showMessageBox(win as never, options as never) : d.showMessageBox(options as never),
+    showOpenDialog: (win, options) =>
+      win !== undefined ? d.showOpenDialog(win as never, options as never) : d.showOpenDialog(options as never),
+    showSaveDialog: (win, options) =>
+      win !== undefined ? d.showSaveDialog(win as never, options as never) : d.showSaveDialog(options as never),
+  };
+}

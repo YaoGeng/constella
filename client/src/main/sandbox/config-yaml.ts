@@ -13,13 +13,15 @@
 //   - 标量：单/双引号字符串、true/false、null/~、整数/浮点、其余按裸字符串（裸串含 `: `〔冒号
 //     +空格，YAML 映射指示形〕拒绝——URL 等 `:/` 形合法）；
 //   - 嵌套以缩进表达（子块缩进 > 父键；同级缩进一致）；
-//   - 不支持：锚点/引用、多文档、流式内联（[]/{}/`{a: 1}`）、复杂键。违规行 → CONFIG_YAML_INVALID
-//     抛错（Error+string code——经 IpcGateway serializeError 归一；错误码集=02 §3.4 通道冻结面，
-//     本形态不在其中，走 INTERNAL 归一面〔serialize-error ③〕，自拟留痕）。
+//   - 不支持：锚点/引用、多文档、流式内联（[]/{}/`{a: 1}`）、复杂键。违规行 → CONFIG-YAML-INVALID
+//   抛错（Error+string code——经 IpcGateway serializeError 归一 {code,message}；✅ T4-20 落地
+//   〔2026-11-10〕：T4-16 🟡 登记项裁决＝登记制——本码已入 X-01 错误码集 IPC_ERROR_CODES，
+//   不再走 INTERNAL 归一面；yaml 解析错误对用户可操作）。
+import { IPC_ERROR_CODES } from '@constella/shared/ipc';
 
-/** 解析失败错误（code=CONFIG_YAML_INVALID——序列化归一面见文件头） */
+/** 解析失败错误（code=CONFIG-YAML-INVALID——序列化归一面见文件头） */
 export class ConfigYamlError extends Error {
-  readonly code = 'CONFIG_YAML_INVALID';
+  readonly code: string = IPC_ERROR_CODES.CONFIG_YAML_INVALID;
 
   constructor(message: string) {
     super(message);

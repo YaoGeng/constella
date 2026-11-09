@@ -154,6 +154,20 @@ export class CronScheduler {
     this.started = true;
 
     // 1) 注入读 flows/nodes 提取 trigger.cron（坏表达式跳过＋留痕——不拦启动）
+    //    多 trigger.cron 混布：cron 注册仍 flowId 级单注册（首个入表）——第二个起补 warn 与
+    //    坏表达式同口径（T4-19 🟡 移交、T4-20 收口；C-03 口径 2026-11-10 已裁决：RunLoop 侧
+    //    全部触发节点入队，与本处 flowId 级 cron:fired 无交互矛盾）
+    for (const flow of flows) {
+      const crons = flow.nodes
+        .filter((n) => n.type === 'trigger.cron' && typeof n.params.cron === 'string' && n.params.cron !== '')
+        .map((n) => n.params.cron as string);
+      if (crons.length > 1) {
+        this.log(
+          `[constella-main] cron 多触发混布: flowId=${flow.id} 含 ${crons.length} 个 trigger.cron，` +
+            `仅首个 ${JSON.stringify(crons[0])} 注册调度，其余（${crons.slice(1).map((c) => JSON.stringify(c)).join('、')}）忽略`,
+        );
+      }
+    }
     for (const { flowId, cron } of extractCronTriggers(flows)) {
       const parsed = this.parser.parse(cron);
       if (!parsed.ok) {

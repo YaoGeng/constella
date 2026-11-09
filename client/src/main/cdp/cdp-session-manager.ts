@@ -242,6 +242,9 @@ export class CdpSessionManager {
   async listSessions(req: ListSessionsReq): Promise<ListSessionsRes> {
     return this.lanes
       .listByRun(req.runId)
+      // cdpPort=NULL 占位行不投影（T4-20 评审收口）：nodeRunStart 的 ensureLane 兜底行——
+      // 纯数据流 lane 无 cdp 会话，投影为 port=0 幽灵会话会误导 CdpDock（防：cdpPort=null 过滤）
+      .filter((r) => r.cdpPort !== null)
       .map((r) => ({ laneKey: r.id, label: r.label, port: r.cdpPort ?? 0, url: r.lastUrl ?? '' }));
   }
 

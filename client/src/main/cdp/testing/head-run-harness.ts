@@ -32,6 +32,13 @@ export interface HeadRunOptions {
   poolRange?: { first: number; last: number };
   /** ready 等待上限 ms（缺省 60s——冷启动含 Windows Defender 首扫余量） */
   readyTimeoutMs?: number;
+  /** 入口文件覆盖（T4-20：缺省=本目录 head-run-main.ts；runtime 冒烟传 testing/app-head-run-main.ts） */
+  entry?: string;
+  /**
+   * bundle external 追加（T4-20：缺省仅 electron；runtime 冒烟需加 better-sqlite3〔原生模块〕
+   * 与 esbuild〔spawn 期转译服务二进制〕——运行期自 client/node_modules 解析）
+   */
+  externals?: string[];
 }
 
 export interface InvokeResult<T = unknown> {
@@ -66,13 +73,13 @@ export async function launchHeadRun(label: string, opts: HeadRunOptions): Promis
   fs.mkdirSync(opts.userData, { recursive: true });
   const outfile = path.join(CLIENT_ROOT, 'dist', 'headrun', `cdp-head-run-${label}.js`);
   await build({
-    entryPoints: [path.join(HERE, 'head-run-main.ts')],
+    entryPoints: [opts.entry !== undefined ? path.resolve(HERE, opts.entry) : path.join(HERE, 'head-run-main.ts')],
     outfile,
     bundle: true,
     platform: 'node',
     format: 'cjs',
     target: 'node24',
-    external: ['electron'],
+    external: ['electron', ...(opts.externals ?? [])],
     sourcemap: false,
     minify: false,
     logLevel: 'silent',

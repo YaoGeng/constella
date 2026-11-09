@@ -186,7 +186,8 @@ describe.each(TEST_ENGINES)('storage dao [%s]', (engine: DbEngine) => {
       const run = dao.runs.create(flow.id, '任务1');
       expect(() => dao.runs.create(flow.id, '任务2')).toThrow(/已有进行中的运行/);
 
-      dao.lanes.upsert({ id: 'lane-1', runId: run.id, label: 'L1', cdpPort: 9222, partition: null, lastUrl: null, status: 'open' });
+      // 非 cdp 真径（T4-20 评审 blocker 收口）：nodeRunStart 不再前置 lanes 行——DAO 内
+      // ensureLane 占位兜底（id=laneId、label=laneId、cdp 字段 NULL；CdpSessionManager 后续 upsert 覆盖）
       dao.nodeRuns.nodeRunStart({ nodeRunId: 'nr-1', runId: run.id, laneId: 'lane-1', nodeId: 'n1' });
       const out: NodeOut = { branch: 'out', partial: { rows: 3 } };
       dao.nodeRuns.nodeRunFinish({ nodeRunId: 'nr-1', status: 'done', output: out, error: null });

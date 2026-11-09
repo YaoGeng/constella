@@ -450,10 +450,12 @@ describe('openViewer／listSessions／laneMemory（§1 矩阵投影面）', () =
     else throw new Error('expected CdpChannelError');
   });
 
-  it('listSessions=lanes 台账投影（无会话→[]）', async () => {
-    const { manager } = makeManager();
+  it('listSessions=lanes 台账投影（无会话→[]）；占位行（cdpPort=null，nodeRunStart ensureLane）不投影——防 port=0 幽灵会话（T4-20 评审收口）', async () => {
+    const { manager, lanes } = makeManager();
     expect(await manager.listSessions({ runId: 'r-1' })).toEqual([]);
     await manager.createSession(createReq());
+    // 占位行：纯数据流 nodeRunStart 的 ensureLane 兜底（cdp 字段 NULL）——不进投影
+    lanes.upsert({ id: 'main', runId: 'r-1', label: 'main', cdpPort: null, partition: null, lastUrl: null, status: 'open' });
     expect(await manager.listSessions({ runId: 'r-1' })).toEqual([
       { laneKey: 'n-1', label: 'lane-主', port: 9600, url: 'http://127.0.0.1:1/page' },
     ]);

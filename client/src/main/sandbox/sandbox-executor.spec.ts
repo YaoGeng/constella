@@ -115,13 +115,19 @@ describe('SandboxExecutor 组件面（spawn 前置校验＋台账生命周期）
     }
   });
 
-  it('RUN-ENV-MISSING：py 链未装配（PyExecutor=T4-17 占位）', async () => {
+  it('RUN-ENV-MISSING：py 解释器发现失败/包源未装配 → 节点级执行环境缺失降级（02 §12.1；T4-17）', async () => {
     const env = makeSandboxEnv();
     try {
-      const sb = env.makeExecutor();
-      await expect(sb.spawnScript(spawnReq({ scriptPath: 'x.py', lang: 'py' }))).rejects.toMatchObject({
-        code: 'RUN-ENV-MISSING',
-      });
+      // ① py 启动器发现失败（§8① 一次解析无果）
+      const noPy = env.makeExecutor({ listLauncherPythons: () => [] });
+      await expect(
+        noPy.spawnScript(spawnReq({ scriptPath: env.scripts['s1_basic.py']!, lang: 'py' })),
+      ).rejects.toMatchObject({ code: 'RUN-ENV-MISSING' });
+      // ② constella_sdk 包源未注入（py 链装配位缺失）
+      const noPkg = env.makeExecutor({ pyPackageDir: undefined });
+      await expect(
+        noPkg.spawnScript(spawnReq({ scriptPath: env.scripts['s1_basic.py']!, lang: 'py' })),
+      ).rejects.toMatchObject({ code: 'RUN-ENV-MISSING' });
     } finally {
       env.dispose();
     }
@@ -242,6 +248,23 @@ describe('SandboxExecutor 组件面（spawn 前置校验＋台账生命周期）
     expect(e.code).toBe('RUN-SCRIPT-NOT-FOUND');
     expect(e.name).toBe('SandboxError');
   });
+
+  it('exit 帧恰一（settled 守卫）：spawn ENOENT＝error 后 close 跟发（Node 语义）→ 单 exit 帧', async () => {
+    const env = makeSandboxEnv();
+    try {
+      const sb = env.makeExecutor({ execPath: 'C:\\definitely\\not\\real\\electron.exe' });
+      const c = collectEvents(sb);
+      await expect(
+        sb.spawnScript(spawnReq({ scriptPath: env.scripts['s1-basic.ts']!, nodeRunId: 'r-err:n-1' })),
+      ).rejects.toMatchObject({ code: 'RUN-ENV-MISSING' }); // spawn 即败=执行环境面（T4-16 语义）
+      await new Promise((resolve) => setTimeout(resolve, 300)); // error/close 异步跟发窗口
+      const exits = c.events.filter((e) => e.kind === 'exit');
+      expect(exits).toHaveLength(1); // 极端双 exit 帧（error+close）→ settled 守卫恰一（移交②）
+      expect(exits[0]!.code).toBe(-1);
+    } finally {
+      env.dispose();
+    }
+  }, 15_000);
 });
 
 function killPid(pid: number): Promise<void> {

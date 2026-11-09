@@ -1,5 +1,7 @@
 // SandboxExecutor 测试装配（T4-16）：假 node-types 资产树（02 §12.2#3 布局）＋sdk fixtures
 // 六形态复用（T4-10 对端——S-5 共同输入互证）＋事件采集器。
+// T4-17 增补：py 六形态（sdk/py/fixtures——T4-11 对端）＋constella_sdk 包源（sdk/py/
+// constella_sdk——K-01 §2 包与 entry 同置）＋py 自定义 fixture（三层树/env 探针）。
 import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +15,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const CLIENT_ROOT = path.resolve(HERE, '..', '..', '..', '..'); // src/main/sandbox/testing → client
 export const SDK_ROOT = path.resolve(CLIENT_ROOT, '..', 'sdk');
 export const SDK_FIXTURES = path.join(SDK_ROOT, 'fixtures');
+export const SDK_PY_ROOT = path.join(SDK_ROOT, 'py');
+export const SDK_PY_FIXTURES = path.join(SDK_PY_ROOT, 'fixtures');
+export const SDK_PY_PACKAGE = path.join(SDK_PY_ROOT, 'constella_sdk');
 export const SDK_MODULES = {
   sdk: path.join(SDK_ROOT, 'src', 'index.ts'),
   bootstrap: path.join(SDK_ROOT, 'src', 'bootstrap.ts'),
@@ -113,6 +118,75 @@ export const CUSTOM_FIXTURES: Record<string, string> = {
   ].join('\n'),
 };
 
+/** 自定义 py fixture（py 链路专用——S-4 §6.1c/d/e 面；非六形态契约件） */
+export const CUSTOM_PY_FIXTURES: Record<string, string> = {
+  // §6.1c 三层 python 树（spike S-4 scripts/tree_demo.py 同构）：root→child→grandchild，
+  // 各层就绪即 flush TREE_READY（role/pid/ppid/child_pid——taskkill /F 无缓冲机会须显式 flush）；
+  // run() 挂死等 N6 超时强杀（§6.1b py 侧同面）。children 经 Popen 继承 root stdout 句柄。
+  'hang_tree.py': [
+    'import os',
+    'import subprocess',
+    'import sys',
+    'import time',
+    '',
+    '',
+    'def announce(role, child_pid=None):',
+    '    parts = ["TREE_READY", "role=" + role, "pid=%d" % os.getpid(), "ppid=%d" % os.getppid()]',
+    '    if child_pid is not None:',
+    '        parts.append("child_pid=%d" % child_pid)',
+    '    print(" ".join(parts), flush=True)',
+    '',
+    '',
+    'def _spawn_tree():',
+    '    role = sys.argv[1] if len(sys.argv) > 1 else "root"',
+    '    script = os.path.abspath(__file__)',
+    '    if role == "root":',
+    '        kid = subprocess.Popen([sys.executable, "-I", "-X", "utf8", script, "child"])',
+    '        announce("root", kid.pid)',
+    '        return  # root=entry 驱动体：import 后 boot(run) 挂死等超时；亲缘链 root→child→grandchild 保持',
+    '    if role == "child":',
+    '        kid = subprocess.Popen([sys.executable, "-I", "-X", "utf8", script, "grandchild"])',
+    '        announce("child", kid.pid)',
+    '        sys.exit(kid.wait())',
+    '    announce("grandchild")',
+    '    time.sleep(300)',
+    '',
+    '',
+    '_spawn_tree()  # entry import 即起树（SandboxExecutor 经 entry 驱动；argv 无 role=root）',
+    '',
+    '',
+    'async def run(ctx):',
+    '    while True:',
+    '        await ctx.sleep(1000)',
+    '',
+  ].join('\n'),
+  // §6.1d/§6.1e env 探针（py 侧）：CONSTELLA_* 注入面＋cwd·TEMP·TMP 三同回读＋PYTHON* 键集
+  //（os.environ 在 Windows 键名大写化——SYSTEMROOT 大写取值；PYTHON* 断言按前缀扫描）。
+  'env_probe_py.py': [
+    'import json',
+    'import os',
+    'from constella_sdk import NodeCtx',
+    '',
+    '',
+    'async def run(ctx: NodeCtx):',
+    '    e = os.environ',
+    '    data = {',
+    '        "runId": e.get("CONSTELLA_RUN_ID"),',
+    '        "nodeId": e.get("CONSTELLA_NODE_ID"),',
+    '        "llmBaseUrl": e.get("CONSTELLA_LLM_BASE_URL"),',
+    '        "hasApiKey": bool(e.get("CONSTELLA_LLM_API_KEY")),',
+    '        "ctxParams": json.loads(e["CONSTELLA_CTX"])["params"] if e.get("CONSTELLA_CTX") else None,',
+    '        "hasSystemRoot": "SYSTEMROOT" in e,',
+    '        "pythonKeys": sorted(k for k in e if k.upper().startswith("PYTHON")),',
+    '        "cwd": os.getcwd(),',
+    '        "temp": e.get("TEMP", ""),',
+    '        "tmp": e.get("TMP", ""),',
+    '    }',
+    '    return {"data": data}',
+    '',
+  ].join('\n'),
+};
+
 /** 假资产树（node-types/<type>/<ver>/scripts/…——02 §12.2#3 布局） */
 export interface SandboxTestEnv {
   root: string;
@@ -147,8 +221,22 @@ export function makeSandboxEnv(): SandboxTestEnv {
   const libDst = path.join(pkgScripts, 'lib');
   mkdirSync(libDst, { recursive: true });
   for (const f of readdirSync(libSrc)) copyFileSync(path.join(libSrc, f), path.join(libDst, f));
-  // 自定义 fixture
+  // py 六形态（T4-11 对端——s1_basic.py 等；lib/*.py 并置，items.json 与 ts 侧逐字节同文）
+  for (const f of readdirSync(SDK_PY_FIXTURES)) {
+    if (f.endsWith('.py')) {
+      copyFileSync(path.join(SDK_PY_FIXTURES, f), path.join(pkgScripts, f));
+      scripts[f] = path.join(pkgScripts, f);
+    }
+  }
+  for (const f of readdirSync(path.join(SDK_PY_FIXTURES, 'lib'))) {
+    if (f.endsWith('.py')) copyFileSync(path.join(SDK_PY_FIXTURES, 'lib', f), path.join(libDst, f));
+  }
+  // 自定义 fixture（ts＋py）
   for (const [name, source] of Object.entries(CUSTOM_FIXTURES)) {
+    writeFileSync(path.join(pkgScripts, name), source, 'utf8');
+    scripts[name] = path.join(pkgScripts, name);
+  }
+  for (const [name, source] of Object.entries(CUSTOM_PY_FIXTURES)) {
     writeFileSync(path.join(pkgScripts, name), source, 'utf8');
     scripts[name] = path.join(pkgScripts, name);
   }
@@ -181,6 +269,7 @@ export function makeSandboxEnv(): SandboxTestEnv {
           return 'sk-test-123xyz';
         },
         sdkModules: SDK_MODULES,
+        pyPackageDir: SDK_PY_PACKAGE, // py 链装配位（T4-17；overrides 可摘除模拟未装配）
         llm: llmSource,
         ...overrides,
       };

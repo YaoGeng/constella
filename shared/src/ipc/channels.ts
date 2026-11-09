@@ -86,9 +86,13 @@ export const IPC_ERROR_CODES = {
   ZIP_FLOW_NOT_FOUND: 'ZIP-FLOW-NOT-FOUND',
   ZIP_INVALID: 'ZIP-INVALID',
   ZIP_UNSAFE_ENTRY: 'ZIP-UNSAFE-ENTRY',
+  // CONFIG-YAML-INVALID（✅ T4-20 落地〔2026-11-10〕：T4-16 🟡 登记项裁决＝登记制——run:spawnScript
+  // 携 configYaml 解析违规对用户可操作，走业务码非 INTERNAL 归一面；SandboxExecutor config-yaml
+  // 单点抛出经 IpcGateway serializeError 透传）
+  CONFIG_YAML_INVALID: 'CONFIG-YAML-INVALID',
 } as const;
 
-/** IPC 错误码字面量（15 项全集）；参数校验失败复用 02 §6.1 VALIDATION-FAILED（C-M1 §1 铁律），
+/** IPC 错误码字面量（16 项全集）；参数校验失败复用 02 §6.1 VALIDATION-FAILED（C-M1 §1 铁律），
  * storage:invoke 另透传 DAO 业务码（STORAGE_DAO_ERROR_CODES） */
 export type IpcErrorCode =
   | (typeof IPC_ERROR_CODES)[keyof typeof IPC_ERROR_CODES]

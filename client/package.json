@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "node esbuild.mjs && vite build && electron .",
-    "build": "node esbuild.mjs && vite build",
+    "build": "node scripts/check-notices.mjs && node esbuild.mjs && vite build",
     "typecheck": "tsc --noEmit",
     "start": "electron .",
     "notices": "node scripts/gen-notices.mjs",

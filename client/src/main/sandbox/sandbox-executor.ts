@@ -1,24 +1,30 @@
-// SandboxExecutor —— ts/python 沙箱执行链编排（T4-16 / TDD-C-M1 §3 SandboxExecutor 组件行；
-// 本卡=ts 链＋编排面全量；python 链〔PyExecutor〕归 T4-17）。
+// SandboxExecutor —— ts/python 沙箱执行链编排（T4-16 ts 链＋T4-17 py 链＋ProcessKiller 换装；
+// TDD-C-M1 §3 SandboxExecutor 组件行）。
 //
 // 冻结面（§3 组件行＋02 §12.1/§12.2#3/§14）：
 //   - spawnScript(req) → {ok,pid}：脚本路径限 node-types/ 资产白名单（相对形按 nodeTypesRoot
 //     解析——X-01 ExecSpec.file；越界/不存在 → RUN-SCRIPT-NOT-FOUND）；lang ∈ {'py','ts'} 外 →
-//     RUN-INVALID-LANG；'py' → RUN-ENV-MISSING（PyExecutor 未装配=节点级执行环境缺失，T4-17 接管）；
+//     RUN-INVALID-LANG；'py' 链：PyExecutor 解释器发现失败/包源未装配 → RUN-ENV-MISSING
+//     （02 §12.1 节点级执行环境缺失降级；S-4 ②~⑥ 形参/包同置/v1.0d 垫片/TEMP·TMP 三同——
+//     细节见 py-executor.ts 文件头）；
 //   - env 组装（02 §12.1 v1.0a 勘误口径）：传入 env 块＝白名单 5 项
 //     （SystemRoot/TEMP/TMP/PATHEXT/ComSpec）＋CONSTELLA_*（CTX/RUN_ID/NODE_ID/VAULT_PATH/
 //     LLM_BASE_URL/LLM_API_KEY〔=SecretVault.reveal 解密注入，T4-15 消费接线〕恒在；
 //     CDP_WS＝req.laneKey 解析出已开 lane 端点时注入〔T0-06 会签条件键〕；NET_WS＝节点 N1
 //     网络类目时注入〔宿主 NetProxyBridge=T4-20/P5，装配注入位 netEndpointOf〕）——不继承
-//     主进程全量 env（libuv 强制注入 11 系统变量不可关闭、不进断言面，S-4 ⑤）；
+//     主进程全量 env（libuv 强制注入 11 系统变量不可关闭、不进断言面，S-4 ⑤）；py 链
+//     executorEnv 覆盖 TEMP/TMP=run 私有目录（§6.1e 三同——T4-16 评审偏差⑦收口：ts 链
+//     host 透传口径不动，py 链按 S-4 ⑥）；
 //   - configYaml 合并（02 §14 冻结序，M4 #5）：req 携 configYaml 时解析并入 CONSTELLA_CTX.params
 //     （config ← 实例 params；yaml 解析收窄 config-yaml.ts 单点）；
 //   - workdir＝sandbox/<runId>/<nodeId>/{config.yaml,scripts/,vault.json,out/}（WorkdirFactory；
 //     runId/nodeId 取自 nodeRunId `${runId}:${nodeId}` 形——C-03 RunLoop 冻结拆分位，自拟承接留痕）；
-//   - killScript(nodeRunId)：in-band 幂等 {ok:true}（已退出亦 ok；强杀本体=ProcessKiller T4-17，
-//     本卡 killTree 注入位缺省最小 taskkill）；
+//   - killScript(nodeRunId)：in-band 幂等 {ok:true}（已退出亦 ok；强杀本体=ProcessKiller
+//     〔T4-17 换装：taskkill /T /F＋杀后复查 KillReport——survivors 残留告警留痕〕）；
 //   - sweepOrphans（runId 标记＋启动清扫）／dispose（在跑树 killTree）；
-//   - onScriptEvent → run:scriptEvent：stdout/stderr 分片转发前统一过 SecretMasker（sk-***）。
+//   - onScriptEvent → run:scriptEvent：stdout/stderr 分片转发前统一过 SecretMasker（sk-***）；
+//   - exit 帧 settled 守卫（T4-16 评审移交②）：子进程 error 后 close 仍可能跟发（Node 语义）
+//     → 极端双 exit 帧，守卫后 exit 帧恰一。
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -37,7 +43,9 @@ import { mask } from './secret-masker';
 import { registerSandboxChannels } from './sandbox-channels';
 import { WorkdirFactory, assertSafeId, type WorkdirLayout } from './workdir-factory';
 import { TsExecutor, type SdkModulePaths } from './ts-executor';
-import { Watchdog, taskkillTree, type KillTreeFn } from './watchdog';
+import { PyExecutor, type LauncherPython } from './py-executor';
+import { ProcessKiller, type KillReport } from './process-killer';
+import { Watchdog, type KillTreeFn } from './watchdog';
 
 /** Sandbox 业务错误（Error+string code——经 IpcGateway serializeError 归一 {code,message}，§1 铁律） */
 export class SandboxError extends Error {
@@ -69,6 +77,13 @@ export interface SandboxExecutorDeps {
   revealSecret: (refKey: string) => string;
   /** sdk 双 subpath TS 源（TsExecutor alias 目标——见 ts-executor.ts 文件头） */
   sdkModules: SdkModulePaths;
+  /** constella_sdk py 包源目录（py 链装配位——K-01 §2 包与 entry 同置；未注入='py' 链
+   *  spawn → RUN-ENV-MISSING〔装配缺省=节点级执行环境缺失〕；生产接线随 T4-20 组收尾） */
+  pyPackageDir?: string;
+  /** settings python 路径覆盖（§8①：覆盖优先于 py 启动器解析；缺省=py -0p 一次解析） */
+  pythonPathOverride?: string;
+  /** py 启动器枚举注入缝（缺省=真 py -0p；测试注入失败态） */
+  listLauncherPythons?: () => LauncherPython[];
   /** 子进程可执行文件（缺省 process.execPath；electron 装配=electron.exe＋RUN_AS_NODE） */
   execPath?: string;
   /** LLM env 值源（缺省＝空 baseUrl/无引用键——键面恒在） */
@@ -77,7 +92,7 @@ export interface SandboxExecutorDeps {
   cdpEndpointOf?: (laneKey: string) => string;
   /** NET 端点解析（NetProxyBridge 宿主=T4-20/P5；N1 网络类目判定在装配侧——null/未注入=不注入 NET_WS） */
   netEndpointOf?: (req: SpawnScriptReq) => string | null;
-  /** 树杀实现（缺省最小 taskkill /T /F；ProcessKiller〔T4-17〕换装位） */
+  /** 树杀实现（缺省=ProcessKiller：taskkill /T /F＋杀后复查 KillReport——T4-17 换装） */
   killTree?: KillTreeFn;
 }
 
@@ -180,6 +195,9 @@ interface LiveChild {
 export class SandboxExecutor {
   private readonly factory: WorkdirFactory;
   private readonly ts: TsExecutor;
+  private readonly py: PyExecutor | undefined;
+  private readonly processKiller = new ProcessKiller();
+  private readonly killTreeImpl: KillTreeFn;
   private readonly watchdog: Watchdog;
   private readonly live = new Map<string, LiveChild>();
   private readonly listeners = new Set<(e: ScriptEvent) => void>();
@@ -189,7 +207,16 @@ export class SandboxExecutor {
   constructor(private readonly deps: SandboxExecutorDeps) {
     this.factory = new WorkdirFactory({ sandboxRoot: deps.sandboxRoot });
     this.ts = new TsExecutor({ sdkModules: deps.sdkModules, execPath: deps.execPath });
-    this.watchdog = new Watchdog({ killTree: deps.killTree });
+    this.py =
+      deps.pyPackageDir !== undefined
+        ? new PyExecutor({
+            pyPackageDir: deps.pyPackageDir,
+            pythonPathOverride: deps.pythonPathOverride,
+            listLauncherPythons: deps.listLauncherPythons,
+          })
+        : undefined; // 未装配：'py' spawn → RUN-ENV-MISSING（装配缺省=执行环境缺失）
+    this.killTreeImpl = deps.killTree ?? ((pid: number) => this.processKiller.killTree(pid));
+    this.watchdog = new Watchdog({ killTree: this.killTreeImpl });
   }
 
   /**
@@ -220,8 +247,21 @@ export class SandboxExecutor {
       throw new SandboxError('RUN-INVALID-LANG', `未知脚本语言: ${String(req.lang)}（期望 'py'|'ts'）`);
     }
     if (req.lang === 'py') {
-      // PyExecutor=T4-17：python 执行链未装配=节点级执行环境缺失（02 §12.1 降级口径）
-      throw new SandboxError('RUN-ENV-MISSING', 'python 执行链未装配（PyExecutor=T4-17）——节点级执行环境缺失');
+      // py 链执行环境降级面（02 §12.1：节点级执行环境缺失，非崩溃）——先于脚本路径白名单检
+      // （环境缺失=粗粒度用户可见条件，试跑/运行前检测并提示语义）
+      if (this.py === undefined) {
+        throw new SandboxError(
+          'RUN-ENV-MISSING',
+          'python 执行链未装配（constella_sdk 包源未注入 pyPackageDir）——节点级执行环境缺失（02 §12.1）',
+        );
+      }
+      const resolution = this.py.resolve();
+      if (resolution.missing) {
+        throw new SandboxError(
+          'RUN-ENV-MISSING',
+          `python 解释器不可用: ${resolution.reason}——节点级执行环境缺失（02 §12.1 降级）`,
+        );
+      }
     }
     const { runId, nodeId } = splitNodeRunId(req.nodeRunId);
     assertSafeId(runId, 'runId');
@@ -229,9 +269,10 @@ export class SandboxExecutor {
     const scriptAbs = resolveScriptPath(this.deps.nodeTypesRoot, req.scriptPath);
     const mergedParams = mergeParams(req.params, req.configYaml); // 02 §14 冻结序（config ← 实例）
     const workdir = this.factory.create(runId, nodeId, req.configYaml);
-    const entryPath = path.join(workdir.scriptsDir, 'entry.ts');
-    this.ts.writeEntry(scriptAbs, entryPath, req.entry);
-    const spec = await this.ts.prepare(scriptAbs, entryPath);
+    const spec =
+      req.lang === 'py'
+        ? this.py!.prepare(scriptAbs, req.entry, workdir) // S-4 ②：python -I -X utf8 <entry>＋包同置＋v1.0d 垫片
+        : await this.ts.prepare(scriptAbs, this.writeTsEntry(scriptAbs, workdir, req.entry));
     const env = assembleChildEnv({
       mergedParams,
       input: req.input,
@@ -257,43 +298,17 @@ export class SandboxExecutor {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    const startedAt = Date.now();
     if (child.pid === undefined || child.stdout === null || child.stderr === null) {
+      // spawn 即败（execPath 消失等）：观察者先挂（error 后 close 跟发=Node 语义——settled
+      // 守卫单 exit 帧收敛＋无 unhandled 'error'），再抛原语义 RUN-ENV-MISSING
+      this.observeChild(child, req.nodeRunId, runId, -1, startedAt);
       throw new SandboxError('RUN-ENV-MISSING', `子进程未取得 pid/stdio（execPath=${spec.cmd}）`);
     }
     const pid = child.pid;
-    const startedAt = Date.now();
     this.live.set(req.nodeRunId, { pid, child, runId, startedAt });
     this.factory.addPid(runId, pid);
-
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      this.emit({ nodeRunId: req.nodeRunId, kind: 'stdout', chunk: mask(chunk) });
-    });
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      this.emit({ nodeRunId: req.nodeRunId, kind: 'stderr', chunk: mask(chunk) }); // stderr 同过掩码（02 §12.3）
-    });
-    child.on('error', (err) => {
-      // spawn 后异步失败（execPath 消失等）——按退出面收敛
-      this.emit({
-        nodeRunId: req.nodeRunId,
-        kind: 'exit',
-        code: -1,
-        ms: Date.now() - startedAt,
-      });
-      this.cleanupChild(req.nodeRunId, pid, runId);
-      console.error('[constella-sandbox] 子进程错误:', err);
-    });
-    child.on('close', (code) => {
-      // 观测按 code（S-4 ③；taskkill 后 code=1、signal=null）
-      this.emit({
-        nodeRunId: req.nodeRunId,
-        kind: 'exit',
-        code: code ?? -1,
-        ms: Date.now() - startedAt,
-      });
-      this.cleanupChild(req.nodeRunId, pid, runId);
-    });
+    this.observeChild(child, req.nodeRunId, runId, pid, startedAt);
 
     // N6 timeoutMs（02 §8.6 0 值语义）：0=不武装；>0=到点强杀（Watchdog；退出看门狗同体）
     if (req.timeoutMs > 0) {
@@ -318,17 +333,16 @@ export class SandboxExecutor {
   /** 启动清扫（AppRuntime 启动序末步）：杀残留 pid 树＋删非在跑 run 目录（runId 标记） */
   async sweepOrphans(): Promise<void> {
     const liveRuns = new Set([...this.live.values()].map((c) => c.runId));
-    const killTree = this.deps.killTree ?? taskkillTree;
     for (const runId of this.factory.listRunIds()) {
       if (liveRuns.has(runId)) continue;
       for (const pid of this.factory.readPids(runId)) {
-        await killTree(pid).catch(() => undefined);
+        await this.killTreeSafely(pid, `sweepOrphans runId=${runId}`);
       }
       this.factory.removeRun(runId);
     }
   }
 
-  /** 退出序：在跑树 killTree＋等待退出（§3 生命周期段；ProcessKiller 复查=T4-17） */
+  /** 退出序：在跑树 killTree＋等待退出（§3 生命周期段；ProcessKiller 杀后复查） */
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
@@ -342,17 +356,78 @@ export class SandboxExecutor {
     for (const l of this.listeners) l(e);
   }
 
+  /**
+   * 子进程观察者挂载（stdout/stderr 掩码转发＋exit 帧 settled 守卫——移交②：error 后
+   * close 仍可能跟发〔Node 语义，spawn ENOENT 实测 error:ENOENT→close:-4058 双发〕→
+   * 极端双 exit 帧，守卫后 exit 帧恰一；首到者权威——error 期 code=-1、close 期 code 权威值）。
+   */
+  private observeChild(
+    child: ChildProcess,
+    nodeRunId: string,
+    runId: string,
+    pid: number,
+    startedAt: number,
+  ): void {
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      this.emit({ nodeRunId, kind: 'stdout', chunk: mask(chunk) });
+    });
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      this.emit({ nodeRunId, kind: 'stderr', chunk: mask(chunk) }); // stderr 同过掩码（02 §12.3）
+    });
+    let exitSettled = false;
+    const emitExitOnce = (code: number): void => {
+      if (exitSettled) return;
+      exitSettled = true;
+      this.emit({ nodeRunId, kind: 'exit', code, ms: Date.now() - startedAt });
+      this.cleanupChild(nodeRunId, pid, runId);
+    };
+    child.on('error', (err) => {
+      // spawn 后异步失败（execPath 消失等）——按退出面收敛
+      emitExitOnce(-1);
+      console.error('[constella-sandbox] 子进程错误:', err);
+    });
+    child.on('close', (code) => {
+      // 观测按 code（S-4 ③；taskkill 后 code=1、signal=null）
+      emitExitOnce(code ?? -1);
+    });
+  }
+
+  /** ts 链 entry 落盘（scripts/entry.ts——S-5 冻结形；返回 entry 绝对路径供 prepare） */
+  private writeTsEntry(scriptAbs: string, workdir: WorkdirLayout, entryFn: string): string {
+    const entryPath = path.join(workdir.scriptsDir, 'entry.ts');
+    this.ts.writeEntry(scriptAbs, entryPath, entryFn);
+    return entryPath;
+  }
+
   private cleanupChild(nodeRunId: string, pid: number, runId: string): void {
     const entry = this.live.get(nodeRunId);
     if (entry !== undefined && entry.pid === pid) this.live.delete(nodeRunId);
     this.factory.removePid(runId, pid);
   }
 
+  /** 树杀＋失败/残留告警留痕（T4-16 评审移交③：静默丢弃面补 warn——孤儿清扫兜底面数据源） */
+  private async killTreeSafely(pid: number, what: string): Promise<void> {
+    try {
+      this.warnSurvivors(pid, await this.killTreeImpl(pid), what);
+    } catch (err) {
+      console.error(`[constella-sandbox] 树杀异常（${what}）: pid=${pid}`, err);
+    }
+  }
+
+  /** KillReport 残留告警（ProcessKiller 返回面——survivors 非空不静默） */
+  private warnSurvivors(pid: number, report: unknown, what: string): void {
+    const r = report as KillReport | null | undefined;
+    if (r !== null && r !== undefined && Array.isArray(r.survivors) && r.survivors.length > 0) {
+      console.error(`[constella-sandbox] 树杀复查残留（${what}）: pid=${pid} survivors=${r.survivors.join(',')}——孤儿清扫面兜底`);
+    }
+  }
+
   private async killLive(nodeRunId: string): Promise<void> {
     const entry = this.live.get(nodeRunId);
     if (entry === undefined) return; // 已退出/未知 → 幂等 ok
-    const killTree = this.deps.killTree ?? taskkillTree;
-    await killTree(entry.pid).catch(() => undefined);
+    await this.killTreeSafely(entry.pid, `killScript nodeRunId=${nodeRunId}`);
     const closed = new Promise<void>((resolve) => {
       entry.child.once('close', () => resolve());
       entry.child.once('error', () => resolve());

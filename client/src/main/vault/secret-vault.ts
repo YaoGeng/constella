@@ -52,6 +52,18 @@ export class SecretVaultError extends Error {
   }
 }
 
+/**
+ * vault.bin 损坏错误（T4-20 最小恢复面的判别标记——init 显式失败语义〔自拟项④〕不变，
+ * 仅收敛为具名类供装配层 instanceof 判别：隔离损坏文件＋日志留痕后换新空仓继续启动，
+ * 见 vault-recovery.ts；消息文案不变——T4-15 套件 /vault\.bin 损坏/ 断言面守恒）。
+ */
+export class VaultCorruptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VaultCorruptError';
+  }
+}
+
 /** vault.bin 文件名（C-M1 §4 文件契约②：userData/vault.bin） */
 export const VAULT_FILE_NAME = 'vault.bin';
 
@@ -158,14 +170,14 @@ export class SecretVault {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      throw new Error(`vault.bin 损坏（非 JSON 密文表）: ${this.vaultPath}`); // 自拟项④
+      throw new VaultCorruptError(`vault.bin 损坏（非 JSON 密文表）: ${this.vaultPath}`); // 自拟项④
     }
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(`vault.bin 损坏（密文表非对象）: ${this.vaultPath}`);
+      throw new VaultCorruptError(`vault.bin 损坏（密文表非对象）: ${this.vaultPath}`);
     }
     for (const [k, v] of Object.entries(parsed)) {
       if (typeof v !== 'string') {
-        throw new Error(`vault.bin 损坏（密文值非 string）: ${this.vaultPath}`);
+        throw new VaultCorruptError(`vault.bin 损坏（密文值非 string）: ${this.vaultPath}`);
       }
       this.entries.set(k, v);
     }

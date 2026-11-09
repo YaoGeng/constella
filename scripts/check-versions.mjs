@@ -33,6 +33,10 @@ const ASSERTIONS = [
   { pkg: './client', dep: 'zundo', version: '2.3.0', scope: 'dependencies' },
   { pkg: './client', dep: 'tailwindcss', version: '4.3.5', scope: 'devDependencies' },
   { pkg: './client', dep: 'shadcn', version: '4.23.0', scope: 'devDependencies' },
+  // P4 断言面（T4-18 🔵 移交、T4-20 收口：CdpBridge 宿主 ws＋@types/ws——03 C-M1 §3 CdpBridge 行
+  // 「版本锁随 P4 实现卡安装定」；ws=MIT，S-9 复验通过）
+  { pkg: './client', dep: 'ws', version: '8.18.2', scope: 'dependencies' },
+  { pkg: './client', dep: '@types/ws', version: '8.18.2', scope: 'devDependencies' },
 ];
 
 const failures = [];

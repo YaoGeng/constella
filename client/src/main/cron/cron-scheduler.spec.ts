@@ -73,18 +73,26 @@ describe('CronScheduler start(flows)：注入读 flows/nodes 提取 trigger.cron
     scheduler.stop();
   });
 
-  it('同流程多 trigger.cron：首个（nodes 序）入表——C-03 多触发混布口径待评审，flowId 级单注册', () => {
+  it('同流程多 trigger.cron：首个（nodes 序）入表＋第二个起补 warn——C-03 口径已收口（2026-11-10：RunLoop 侧全部触发节点入队，cron 注册仍 flowId 级单注册）', () => {
     vi.setSystemTime(at(2026, 10, 9, 14, 0, 0));
     const kv = makeKv();
-    const scheduler = new CronScheduler({ settings: kv });
+    const warn = vi.fn();
+    const scheduler = new CronScheduler({ settings: kv, log: warn });
     scheduler.start([
       { id: 'f1', nodes: [
         { type: 'trigger.cron', params: { cron: '0 9 * * *' } },
         { type: 'trigger.cron', params: { cron: '0 20 * * *' } },
       ] },
+      { id: 'f2', nodes: [{ type: 'trigger.cron', params: { cron: '0 21 * * *' } }] }, // 单触发不 warn
     ]);
-    expect(scheduler.scheduledFlowIds).toEqual(['f1']);
+    expect(scheduler.scheduledFlowIds).toEqual(['f1', 'f2']);
     expect(scheduler.nextFire('f1')?.getTime()).toBe(at(2026, 10, 10, 9, 0, 0).getTime());
+    // T4-19 🟡 移交（T4-20 收口）：第二个起静默丢弃面补 warn——与坏表达式同口径（this.log）
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0]?.[0]);
+    expect(line).toContain('f1');
+    expect(line).toContain('0 20 * * *'); // 被忽略的表达式点名
+    expect(line).toContain('0 9 * * *'); // 生效的表达式点名
     scheduler.stop();
   });
 });

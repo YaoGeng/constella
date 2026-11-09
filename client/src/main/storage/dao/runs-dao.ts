@@ -147,8 +147,19 @@ export class NodeRunsDao {
     return rows.map(rowToNodeRun);
   }
 
-  /** 节点开跑（status=running；id 由 C-03 生成传入——重试幂等语义由调用方保证） */
+  /**
+   * 节点开跑（status=running；id 由 C-03 生成传入——重试幂等语义由调用方保证）。
+   * 非 cdp lane FK 兜底（T4-20 评审 blocker 收口）：node_runs.lane_id REFERENCES lanes(id)
+   * 而 lanes 只由 CdpSessionManager 写入（无 renderer op）——纯数据流 lane（如 'main'）先落
+   * **占位行**（id=laneId、label=laneId、cdp 三字段 NULL，ON CONFLICT DO NOTHING 幂等）；
+   * CdpSessionManager 后续 upsert 覆盖真值（时序上 nodeRunStart 先于 cdp 节点 ensureSession
+   * 无冲突；占位行不覆写已覆盖真值）。cdp:listSessions 投影过滤 cdpPort=NULL 占位行——
+   * 防 port=0 幽灵会话（cdp-session-manager.ts）。
+   */
   nodeRunStart(args: { nodeRunId: string; runId: string; laneId: string; nodeId: string }): void {
+    this.conn()
+      .prepare('INSERT INTO lanes (id, run_id, label, cdp_port, partition, last_url, status) VALUES (:id, :run_id, :label, NULL, NULL, NULL, \'open\') ON CONFLICT(id) DO NOTHING')
+      .run({ id: args.laneId, run_id: args.runId, label: args.laneId });
     this.conn()
       .prepare(
         "INSERT INTO node_runs (id, run_id, lane_id, node_id, status, started_at, ended_at, output, error) VALUES (:id, :rid, :lid, :nid, 'running', :ts, NULL, NULL, NULL)",
