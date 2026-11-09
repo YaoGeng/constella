@@ -11,12 +11,16 @@
 //
 // globals=false：测试一律显式 `import { describe, it, expect, vi } from 'vitest'`，
 // 保持 `tsc --noEmit` 对测试文件零配置通过（client tsconfig types 仅 ["node"]）。
+//
+// P3 扩面（T3-01，2026-11-09 留痕）：include 增 `.tsx`——C-01 组件测试随 P3 波进入；
+// 全局 environment 仍为 node，组件测试文件头部以 `// @vitest-environment jsdom`
+// docblock 声明局部 DOM 环境（devDep jsdom@31.0.0 随本卡锁入），现有 node 侧套件零影响。
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
-    include: ['src/**/*.{test,spec}.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
 });

@@ -1,0 +1,54 @@
+/* Constella renderer 全局样式入口（T3-01；tailwindcss 4 纯 CSS 入口，无 tailwind.config.js）。
+   玻璃拟态主题变量与画布组件类随 T3-02~T3-08 各卡增补；xyflow 基础样式经 canvas 模块
+   （canvas/index.ts）引入——P-3 收窄：画布库 import 面只在 canvas 目录。 */
+@import "tailwindcss";
+
+/* 画布宿主基线（demo L190-198 canvas CSS 的 xyflow 语义等价起点） */
+.cn-canvas-host {
+  width: 100%;
+  height: 100%;
+}
+
+/* 缩放条（CanvasChrome 内嵌件） */
+.cn-zoombar {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(20, 22, 32, 0.72);
+  backdrop-filter: blur(8px);
+  color: #cdd3e1;
+  font-size: 12px;
+  user-select: none;
+}
+
+.cn-zoombar__btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cn-zoombar__btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.cn-zoombar__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cn-zoombar__value {
+  min-width: 38px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

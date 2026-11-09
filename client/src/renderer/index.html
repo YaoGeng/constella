@@ -3,11 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- T0-07 会签核对项（T3-01 落位）：connect-src 放行 ws://127.0.0.1（不带端口段=全端口，
+         覆盖 NetProxyBridge 9321-9420 与 lane 桥动态端口；app:// 为 standard+secure 特权协议，
+         'self' 即 app:// 源）。style 'unsafe-inline'=React 内联样式；script 'self'=vite 外部产物。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1"
+    />
     <title>Constella</title>
   </head>
   <body>
-    <!-- P3 波 C-01 替换为 CanvasModule（React 19 + @xyflow/react）挂载点 -->
+    <!-- P3 波 C-01 替换为 CanvasModule（React 19 + xyflow 画布）挂载点 -->
     <div id="root"></div>
-    <script type="module" src="./index.ts"></script>
+    <script type="module" src="./index.tsx"></script>
   </body>
 </html>

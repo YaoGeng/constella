@@ -6,11 +6,8 @@
 //
 // 断言面 = 下方 ASSERTIONS 数组（可扩展；比较为严格相等——精确锁版，`^`/`~` 前缀一律判失败）：
 //   - P0（本卡 T0-08）：client devDependencies —— electron 45.2.3（S-1 锁）/ esbuild 0.28.2（S-5 锁）/ typescript 5.9.3（S-1 口径）
-//   - P3（T3-01 / C-01 首卡增补 renderer 断言面，届时向数组追加即可）：
-//       { pkg: './client', dep: 'react',           version: '19.3.1',    scope: 'dependencies' },
-//       { pkg: './client', dep: '@xyflow/react',   version: '12.12.1',   scope: 'dependencies' },
-//       { pkg: './client', dep: 'zustand',         version: '5.1.0',     scope: 'dependencies' },
-//       { pkg: './client', dep: 'zundo',           version: '2.3.0',     scope: 'dependencies' },
+//   - P3（T3-01 已落，C-01 §6.4 全量）：renderer 依赖面 react/@xyflow/zustand/zundo（deps）＋
+//     tailwindcss 4.3.5 / devDep shadcn CLI 4.23.0（D-9 copy-in 基线）。@dagrejs/dagre@3.1.3 随 T3-07 装（§6.4 清单不含 dagre——§6.5 grep 收窄单验）。
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -29,6 +26,13 @@ const ASSERTIONS = [
   { pkg: './client', dep: 'electron', version: '45.2.3', scope: 'devDependencies' },
   { pkg: './client', dep: 'esbuild', version: '0.28.2', scope: 'devDependencies' },
   { pkg: './client', dep: 'typescript', version: '5.9.3', scope: 'devDependencies' },
+  // P3 断言面（T3-01；C-01 §6.4）
+  { pkg: './client', dep: 'react', version: '19.3.1', scope: 'dependencies' },
+  { pkg: './client', dep: '@xyflow/react', version: '12.12.1', scope: 'dependencies' },
+  { pkg: './client', dep: 'zustand', version: '5.1.0', scope: 'dependencies' },
+  { pkg: './client', dep: 'zundo', version: '2.3.0', scope: 'dependencies' },
+  { pkg: './client', dep: 'tailwindcss', version: '4.3.5', scope: 'devDependencies' },
+  { pkg: './client', dep: 'shadcn', version: '4.23.0', scope: 'devDependencies' },
 ];
 
 const failures = [];
