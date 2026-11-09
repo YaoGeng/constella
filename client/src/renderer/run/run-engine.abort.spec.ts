@@ -114,7 +114,8 @@ function makeEnv(docMap: Record<string, FlowDoc>, transport?: RunTransport) {
     return doc;
   });
   on('runs.create', () => ({ id: `r${++runSeq}` }));
-  for (const op of ['runs.finish', 'runs.nodeRunStart', 'runs.nodeRunFinish', 'logs.append']) on(op, () => undefined);
+  for (const op of ['runs.finish', 'runs.nodeRunStart', 'runs.nodeRunFinish', 'logs.append', 'hits.resolve']) on(op, () => undefined);
+  on('hits.create', (req) => ({ id: `h:${(req as { args: { nodeId: string } }).args.nodeId}` }));
   const engine = createRunEngine({ storage: client, registry: fakeRegistry(), guardDirty: () => false, ...(transport ? { transport } : {}) });
   return { calls, engine };
 }
@@ -274,8 +275,32 @@ describe('RunEngine §6.1h 终止瞬时扩散', () => {
     await env.engine.whenSettled(handle!.runId);
     await flush();
     expect(handle?.statuses).toMatchObject({ s: 'skipped' }); // 终止波及统一 ⊘
-    expect(handle?.statuses.x).toBeUndefined(); // 不派生
-    expect(fx.spawns.some((s) => s.nodeRunId === 'r1:x')).toBe(false);
+    expect(handle?.statuses.x).toBe('skipped'); // M-1：abort 路径 drain 后仍走 converge——未派生节点统一 ⊘ 落 statuses
+    expect(fx.spawns.some((s) => s.nodeRunId === 'r1:x')).toBe(false); // 不派生（无 spawn）
+  });
+
+  it('P-1：abort 时已失败（cdpProbe 断连置 failed）→ drain 后终态=error（failed 优先，demo L1946）', async () => {
+    const fx = makeExecTransport({ probe: () => ({ ok: false, detail: '会话进程未连接' }) });
+    // t1→c1（probe 失败→failed 置位）＋t1→h（断点挂起——run 不 drain 直到 abort 放行）
+    const doc: FlowDoc = {
+      id: 'f1',
+      name: '流程f1',
+      nodes: [
+        flowNode('t1', 'trigger.manual'),
+        flowNode('c1', 'cdp.open', { url: 'https://a.example.com' }),
+        flowNode('h', 'human.review', { name: '人工确认' }),
+      ],
+      edges: [edge('t1', 'c1'), edge('t1', 'h')],
+    };
+    const env = makeEnv({ f1: doc }, fx.transport);
+    const handle = await env.engine.startRun('f1');
+    await until(() => handle?.statuses.c1 === 'error'); // 失败已置位（h 仍 waiting 挂起）
+    env.engine.abortRun(handle!.runId); // abort 瞬间 flags.failed=true——终态判定移交 drain 后
+    await env.engine.whenSettled(handle!.runId);
+    await flush();
+    expect(handle?.statuses).toMatchObject({ c1: 'error', h: 'skipped' }); // 断点放行 ⊘＋失败节点 error 保留
+    const finish = env.calls.find((c) => c.op === 'runs.finish') as { args: Record<string, unknown> } | undefined;
+    expect(finish?.args).toMatchObject({ status: 'error', failed: 1 }); // failed 优先于 aborted（P-1）
   });
 });
 
@@ -367,7 +392,7 @@ describe('RunEngine §6.1j delay 真实计时可中断', () => {
     await env.engine.whenSettled(handle!.runId);
     await flush();
     expect(handle?.statuses).toMatchObject({ d: 'skipped' }); // ⊘ 收敛（50ms 步进自觉退出）
-    expect(handle?.statuses.x).toBeUndefined(); // 不交付下游
+    expect(handle?.statuses.x).toBe('skipped'); // 不交付下游——M-1：converge 兜底统一 ⊘ 落 statuses
     const finish = env.calls.find((c) => c.op === 'runs.finish') as { args: Record<string, unknown> } | undefined;
     expect(finish?.args).toMatchObject({ status: 'aborted' });
   });

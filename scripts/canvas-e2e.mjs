@@ -4,9 +4,10 @@
 // 用法：node scripts/canvas-e2e.mjs（仓库根；任意 cwd 均可）
 //   - 自动 pnpm -F ./client build（幂等，vite 增量）→ electron.launch（client 包产物）
 //   - renderer 以 app://./index.html#e2e 装载 → window.__CONSTELLA_E2E__ 注入钩子激活
-//   - 场景（首批 a/b，T3-06/T3-08 扩 d/e/f 全量）：
+//   - 场景（首批 a/b，T3-06/T3-08 扩 d/e/c；T4-04 扩 f——runStore 接线后 §6.2f 收口）：
 //       a) snap 开启拖动落点=20 倍数、关闭则否（§6.2a）
 //       b) connect 三违例 toast 文案逐字（§6.2b；demo L1524/L1526/L1528）
+//       f) 运行中节点仅选中不可拖、undo/redo 禁用＋五态 statuses 驱动画布（§6.2f；A-5.1）
 //   - 真实输入经 Playwright mouse API（isTrusted）；S-1 ② view:window 约束仅在页内合成
 //     dispatchEvent 路径生效，本脚本真实输入不受限。
 //
@@ -26,6 +27,18 @@ const results = [];
 function report(name, ok, detail = '') {
   results.push({ name, ok });
   console.log(`${ok ? '[ok]' : '[fail]'} ${name}${detail ? ` —— ${detail}` : ''}`);
+}
+
+/** evaluate 直读轮询等待（mouse 交互后页面 rAF 停摆——waitForFunction/boundingBox 等
+ *  帧驱动 API 不可靠；本 helper 在页面内以真实 setTimeout 轮询，Node 侧带超时兜底）。 */
+async function waitPageTrue(page, exprSource, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const ok = await page.evaluate(exprSource);
+    if (ok) return;
+    if (Date.now() > deadline) throw new Error(`waitPageTrue 超时（${timeoutMs}ms）: ${exprSource}`);
+    await page.waitForTimeout(80);
+  }
 }
 
 /** E2E 注入文档：A/B 常规节点（单出单入）＋ T 触发节点（ins=[]）。 */
@@ -55,8 +68,9 @@ async function main() {
     const page = await app.firstWindow();
     page.on('console', (msg) => {
       const t = msg.text();
-      if (t.includes('e2e hook') || t.includes('error')) console.log(`[renderer] ${t}`);
+      if (/e2e hook|error|Error|Uncaught|warn/i.test(t)) console.log(`[renderer][${msg.type()}] ${t.slice(0, 500)}`);
     });
+    page.on('pageerror', (err) => console.log(`[pageerror] ${String(err).slice(0, 800)}`));
 
     // 3) 激活 e2e 钩子：设 hash 后 reload（产品会话零暴露面）
     await page.evaluate(() => {
@@ -271,6 +285,115 @@ async function main() {
     }
   } finally {
     await app.close();
+  }
+
+  // ————— 场景 f（独立会话）：运行中节点仅选中不可拖、undo/redo 禁用（§6.2f；A-5.1） —————
+  // 独立 app 会话：长交互会话（a~e 场景后）中 mouse 点击与 React 19/xyflow 的 DOM 提交存在
+  // removeChild 竞态（宿主已知问题，见卡片备注）——f 场景自带干净基线，独立会话验证同一链路。
+  {
+    const app2 = await electron.launch({ args: ['.'], cwd: clientDir });
+    try {
+      const page = await app2.firstWindow();
+      page.on('pageerror', (err) => console.log(`[pageerror:f] ${String(err).slice(0, 300)}`));
+      await page.evaluate(() => {
+        window.location.hash = '#e2e';
+        window.location.reload();
+      });
+      await page.waitForFunction(() => Boolean(window.__CONSTELLA_E2E__), null, { timeout: 15000 });
+      // ————— 场景 f：运行中节点仅选中不可拖、undo/redo 禁用（§6.2f；A-5.1；T4-04 runStore 接线收口） —————
+      {
+        // 干净基线：A（触发）/B 两节点；预压一条历史项（f 断言 running 下 undo 禁用、收尾后恢复）
+        await page.evaluate(() => {
+          const w = window.__CONSTELLA_E2E__;
+          w.loadFlow('f-run', {
+            name: 'run',
+            nodes: [
+              { id: 'a', type: 'trigger.manual', name: 'A', position: { x: 80, y: 120 }, params: {} },
+              { id: 'b', type: 'llm.chat', name: 'B', position: { x: 400, y: 120 }, params: {} },
+            ],
+            edges: [],
+          });
+          w.flow().addNodes([
+            { id: 'c', type: 'constella-node', position: { x: 720, y: 320 }, data: { nodeId: 'c', type: 'llm.chat', params: {} } },
+          ]);
+        });
+        await page.waitForSelector('.cn-node[data-node-type="trigger.manual"]', { timeout: 10000 });
+        await page.waitForTimeout(400); // 布局稳定（xyflow 首帧测量）
+        const baseline = await page.evaluate(() => {
+          const w = window.__CONSTELLA_E2E__;
+          const n = w.flow().nodes.find((x) => x.id === 'a');
+          return { x: n.position.x, y: n.position.y, count: w.flow().nodes.length };
+        });
+
+        // f0: 开 run（e2e 钩子直接驱动 runStore 镜像——真实事件源=RunEngine onNodeStatus 同点写入）
+        await page.evaluate(() => {
+          const w = window.__CONSTELLA_E2E__;
+          w.run().runOpened('f-run', 'r-e2e');
+          w.run().nodeStatus({ runId: 'r-e2e', nodeId: 'a', status: 'running' }, 'f-run');
+        });
+        await waitPageTrue(page, () => window.__CONSTELLA_E2E__.flow().running === true);
+
+        // f1: 五态 statuses 驱动画布（A 节点 running 徽标 ⋯；B 未入 statuses=idle 无徽标）
+        const statuses = await page.evaluate(() => ({
+          a: document.querySelector('.cn-node[data-node-type="trigger.manual"]')?.dataset.status ?? '',
+          aBadge: document.querySelector('.cn-node[data-node-type="trigger.manual"] .cn-node__badge')?.textContent ?? '',
+          b: document.querySelector('.cn-node[data-node-type="llm.chat"]')?.dataset.status ?? '',
+          bBadge: document.querySelector('.cn-node[data-node-type="llm.chat"] .cn-node__badge')?.textContent ?? undefined,
+        }));
+        report('f1 五态 statuses 驱动画布（A=running ⋯/B=idle 无徽标）', statuses.a === 'running' && statuses.aBadge === '⋯' && statuses.b === 'idle' && statuses.bBadge === undefined, JSON.stringify(statuses));
+
+        // 坐标经 evaluate 直读（mouse 交互后页面 rAF 停摆——playwright boundingBox/waitForFunction
+        // 等帧驱动 API 不可靠，DOM 直读稳定）
+        const center = await page.evaluate(() => {
+          const r = document.querySelector('.cn-node[data-node-type="trigger.manual"]').getBoundingClientRect();
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+
+  
+      // f3: 点击仍可选中（仅选中语义，demo L1472）
+        await page.mouse.click(center.x, center.y);
+        await page.waitForTimeout(150);
+        const selection = await page.evaluate(() => window.__CONSTELLA_E2E__.canvas().selection);
+        report('f3 运行中点击仍选中', selection === 'a', `selection=${selection}`);
+
+          // f2: 运行中节点仅选中不可拖——真实拖动后位置不变（f3 之后执行：拖动尝试会吃掉同点
+        // 后续 click 的选中判定；独立会话下无 removeChild 竞态，位置断言走 store 层）
+        const center2 = await page.evaluate(() => {
+          const r = document.querySelector('.cn-node[data-node-type="trigger.manual"]').getBoundingClientRect();
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        await page.mouse.move(center2.x, center2.y);
+        await page.mouse.down();
+        await page.mouse.move(center2.x + 90, center2.y + 60, { steps: 6 });
+        await page.mouse.up();
+        await page.waitForTimeout(200);
+        const afterDrag = await page.evaluate(() => {
+          const w = window.__CONSTELLA_E2E__;
+          const n = w.flow().nodes.find((x) => x.id === 'a');
+          return { x: n.position.x, y: n.position.y };
+        });
+        const dragOk = afterDrag.x === baseline.x && afterDrag.y === baseline.y;
+        report('f2 运行中拖动不生效（位置不变）', dragOk, JSON.stringify({ baseline, afterDrag }));
+
+      // f4: 运行中 undo/redo 禁用（历史项存在但 no-op）
+        await page.keyboard.press('Control+z');
+        await page.waitForTimeout(150);
+        const undoDuring = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+        report('f4 运行中 Ctrl+Z 禁用（节点数不变）', undoDuring === baseline.count, `${undoDuring} vs ${baseline.count}`);
+
+        // f5: run 收尾 → running 复位、undo 恢复可用
+        await page.evaluate(() => window.__CONSTELLA_E2E__.run().runClosed('f-run', 'r-e2e'));
+        await waitPageTrue(page, () => window.__CONSTELLA_E2E__.flow().running === false);
+        await page.waitForTimeout(200);
+        await page.keyboard.press('Control+z');
+        await page.waitForTimeout(150);
+        const undoAfter = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+        report('f5 收尾后 undo 恢复（回退预压项）', undoAfter === baseline.count - 1, `${undoAfter} vs ${baseline.count - 1}`);
+
+      }
+    } finally {
+      await app2.close();
+    }
   }
 
   const failed = results.filter((r) => !r.ok);

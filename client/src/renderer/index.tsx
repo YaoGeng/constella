@@ -8,8 +8,10 @@ import './styles/tailwind.css';
 import { CanvasChrome } from './canvas';
 import { CanvasToastProvider } from './canvas/toast';
 import { CanvasEdgeAnimContext, CanvasRegistryContext, CanvasSnapContext } from './canvas/registry-context';
+import { RunStatusBinding } from './canvas/run-status-binding';
 import { useFlowStore } from './canvas/stores/flow-store';
 import { useCanvasStore } from './canvas/canvas-store';
+import { useRunStore } from './run/run-store';
 import { createNodeRegistry } from './node-registry';
 
 /** E2E 最小定义集（#e2e 模式装配——产品装载序 T1-10 经 storage 种子，e2e 环境无 storage）。 */
@@ -59,6 +61,8 @@ function App() {
       canvas: useCanvasStore.getState,
       temporal: useFlowStore.temporal.getState,
       loadFlow: (flowId: string, doc: FlowDoc) => useFlowStore.getState().loadFlow(flowId, doc),
+      // runStore 驱动面（§6.2f 运行态 E2E——真实事件源=RunEngine，e2e 环境无执行面直接驱动镜像）
+      run: useRunStore.getState,
       setSnap,
       setEdgeAnim,
     };
@@ -68,13 +72,15 @@ function App() {
 
   return (
     <CanvasToastProvider>
-      <CanvasSnapContext.Provider value={snap}>
-        <CanvasEdgeAnimContext.Provider value={edgeAnim}>
-          <CanvasRegistryContext.Provider value={registry}>
-            <CanvasChrome />
-          </CanvasRegistryContext.Provider>
-        </CanvasEdgeAnimContext.Provider>
-      </CanvasSnapContext.Provider>
+      <RunStatusBinding>
+        <CanvasSnapContext.Provider value={snap}>
+          <CanvasEdgeAnimContext.Provider value={edgeAnim}>
+            <CanvasRegistryContext.Provider value={registry}>
+              <CanvasChrome />
+            </CanvasRegistryContext.Provider>
+          </CanvasEdgeAnimContext.Provider>
+        </CanvasSnapContext.Provider>
+      </RunStatusBinding>
     </CanvasToastProvider>
   );
 }

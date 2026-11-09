@@ -2,7 +2,7 @@
   "name": "@constella/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "@constella/sdk ts 侧（02 §14 冻结契约）：NodeCtx 类型面＋identity 参考实现（.）＋子进程 bootstrap trampoline（./bootstrap）；py 同构包（sdk/py）随 T4-11 落位",
+  "description": "@constella/sdk ts 侧（02 §14 冻结契约）：NodeCtx 类型面＋identity 参考实现（.）＋子进程 bootstrap trampoline（./bootstrap）；py 同构包（sdk/py，发行名 constella-sdk）帧级同构；ts/py 同构契约测试＋打包分发随 T4-12 落位",
   "type": "module",
   "sideEffects": false,
   "engines": {
@@ -20,16 +20,40 @@
       "default": "./src/bootstrap.ts"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      },
+      "./bootstrap": {
+        "types": "./dist/bootstrap.d.ts",
+        "import": "./dist/bootstrap.js",
+        "default": "./dist/bootstrap.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "THIRD-PARTY-NOTICES.md"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:py": "py -I -X utf8 py/tests/run_contract.py",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs",
+    "test:iso": "node test/isomorphism.mjs",
+    "test:esbuild": "node test/esbuild-regression.mjs",
+    "build:py": "node scripts/build-py.mjs"
   },
   "dependencies": {},
   "devDependencies": {
     "@constella/sdk": "workspace:*",
     "@constella/shared": "workspace:*",
     "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3",
     "vitest": "5.1.0"
   }

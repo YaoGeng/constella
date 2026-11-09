@@ -11,7 +11,8 @@
 //   活跃登记（onScriptActive）：spawn 前 true、settle 后 false（AbortCoordinator kill 数据源）；
 //   delay → 可中断计时（50ms 步进查 abort：中断抛 ExecAbortedError、完整返回 {data:input}）；
 //   logic.branch → BranchFilter 真实求值（T-1 对称语义两侧＋求值异常 reject）；
-//   human.* → 断点门闩（setStatus(waiting)＋挂起；终止放行=reject ExecAbortedError；T4-04 实装位）；
+//   human.* → 断点门闩（setStatus(waiting)＋挂起；T4-04：resolve 载荷=交付下游数据
+//   〔confirm=合并值/skip=原始 input——HitCoordinator〕；终止放行=reject ExecAbortedError）；
 //   cdp.* → env:cdpProbe 前置探活（失败→reject＋ctx.failRun〔X-3〕；ok→ensureSession）＋
 //   命令经注入 CommandTransport（帧形=T0-07 冻结；错误帧→reject；未注入→extract/click 抛错）；
 //   无专属执行体的平台内置类型 → {data: input} 占位直通（不 spawn）。
@@ -104,8 +105,8 @@ function recorderCtx(over: Partial<ExecContext> = {}) {
   const emits: { branch: string; payload: unknown }[] = [];
   const statuses: { status: NodeStatus; error?: string }[] = [];
   const failures: string[] = [];
-  let release: () => void = () => undefined;
-  const hitGate = new Promise<void>((resolve) => {
+  let release: (payload: unknown) => void = () => undefined;
+  const hitGate = new Promise<unknown>((resolve) => {
     release = resolve;
   });
   const ctx: ExecContext = {
@@ -119,7 +120,7 @@ function recorderCtx(over: Partial<ExecContext> = {}) {
     failRun: (reason) => failures.push(reason),
     ...over,
   };
-  return { ctx, logs, emits, statuses, failures, releaseHit: () => release() };
+  return { ctx, logs, emits, statuses, failures, releaseHit: (payload?: unknown) => release(payload) };
 }
 
 function makeDispatcher(
@@ -423,7 +424,7 @@ describe('ExecDispatcher delay/human/内置直通', () => {
     await assertion;
   });
 
-  it('human.*：断点门闩——setStatus(waiting)＋挂起；放行后 {data: input} 直通（resume 交互随 T4-04）', async () => {
+  it('human.*：断点门闩——setStatus(waiting)＋挂起；resolve 载荷=交付数据（T4-04：confirm=合并值/skip=原始 input——载荷由 HitCoordinator 决定）', async () => {
     const fx = fakeTransport();
     const dispatcher = makeDispatcher([def('human.review')], { transport: fx.transport });
     const rec = recorderCtx();
@@ -437,8 +438,8 @@ describe('ExecDispatcher delay/human/内置直通', () => {
     });
     await Promise.resolve();
     expect(settled).toBe(false); // 门闩关闭：挂起中
-    rec.releaseHit(); // 放行（T4-03 仅终止路径；T4-04 扩展 resume 载荷）
-    await expect(p).resolves.toEqual({ data: 'UP' });
+    rec.releaseHit({ merged: 'DOWN' }); // 放行＝HitCoordinator confirm 语义（resolve 载荷透传）
+    await expect(p).resolves.toEqual({ data: { merged: 'DOWN' } });
     expect(fx.spawns).toHaveLength(0);
   });
 

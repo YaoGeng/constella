@@ -40,6 +40,11 @@ export class AbortCoordinator {
     this.hooks.delete(runId);
   }
 
+  /** run 收尾清理销毁去重台账（P-2：destroyedRuns 不随 cleanupRun 泄漏——runId 不复用防御性清理） */
+  forgetRun(runId: string): void {
+    this.destroyedRuns.delete(runId);
+  }
+
   /**
    * 终止瞬时扩散（§3 组件级接口）。返回 false=未注册（调用方回退直接置标志）。
    * killScript 逐脚本 fire-and-forget——个别 IPC 故障不阻塞其余扩散（X-3 方向）。

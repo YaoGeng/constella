@@ -1,7 +1,9 @@
 # constella-sdk —— py 同构运行时（K-01 §1 py 段；发行名 constella-sdk，D-10 命名空间对齐）。
 # 零三方依赖（stdlib only，K-01 §2 红线）；py.typed 随包（PEP 561）。
 # version 单一来源=constella_sdk.__version__（与 ts 侧 sdk/package.json version 恒等——
-# T4-12 两包 semver 恒等断言）；wheel 构建冒烟归 T4-12。
+# T4-12 两包 semver 恒等断言，tests/run_contract.py＋sdk/test/isomorphism.mjs 各有断言）。
+# wheel 构建冒烟=T4-12（sdk/scripts/build-py.mjs：sdist+wheel 产物含 py.typed 与
+# THIRD-PARTY-NOTICES.md——S-9 声明位随包数据）。
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -17,7 +19,7 @@ dynamic = ["version"]
 packages = ["constella_sdk"]
 
 [tool.setuptools.package-data]
-constella_sdk = ["py.typed"]
+constella_sdk = ["py.typed", "THIRD-PARTY-NOTICES.md"]
 
 [tool.setuptools.dynamic]
 version = { attr = "constella_sdk.__version__" }

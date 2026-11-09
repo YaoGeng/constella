@@ -1,11 +1,12 @@
-// ExecDispatcher —— 类型分派执行体（TDD-C-03 §3 ExecDispatcher 行；02 §10 #10＋§8.5＋§14；T4-02＋T4-03）。
+// ExecDispatcher —— 类型分派执行体（TDD-C-03 §3 ExecDispatcher 行；02 §10 #10＋§8.5＋§14；T4-02~04）。
 //   custom（exec≠null）→ run:spawnScript：stdout JSON 行协议（S-5 冻结/K-01 bootstrap——
 //     log/emit/result/error 四帧＋exit 码；stderr 分片按 [lane] warn 日志透传＋并入非零
 //     退出诊断）；N5 组合节点 inner 内联展开＝单进程多步骤（02 §8.5——展开实例化=步骤序
 //     日志 `[lane] ▸ 步骤N`，子步骤共享进程与 ctx）；emit 帧=提前出口（ctx.emit 即时
 //     回调，脚本未退出即交付下游）；result 帧显式校验 plain object（NodeOut 形）；
-//   human.* → 断点门闩（setStatus(waiting)＋ctx.holdAtBreakpoint 挂起；T4-03 仅终止
-//     自动放行＝reject ExecAbortedError，resume/确认/跳过交互随 T4-04 HitCoordinator）；
+//   human.* → 断点门闩（setStatus(waiting)＋ctx.holdAtBreakpoint 挂起＝T4-04
+//     HitCoordinator.hit：hits.create pending＋resolve 载荷=交付下游数据〔confirm=合并值/
+//     skip=原始 input 直发，01 A-7.1〕；终止放行=reject ExecAbortedError→⊘ 收敛）；
 //   delay   → 可中断计时（50ms 步进查 abort，中断抛 ExecAbortedError）；
 //   logic.branch → BranchFilter expr 真实求值（T-1 对称语义，02 §10 #6）；
 //   cdp.*   → env:cdpProbe 前置探活（失败→节点 error＋ctx.failRun 失败终止不走 failBranch，
@@ -15,14 +16,15 @@
 //     returnByValue/中心两击/enable＋轮询〕归 T4-05，本卡落注入 seam 与帧形）；
 //   其余平台内置（无 exec/无专属分派）→ {data: input} 占位直通（V1.1 out.* 经内置分支
 //     注册接入＝预留位，02 §8.8）。
-// N6 重试/backoff/onFailure 路由归 T4-04 PolicyRunner（本卡 policy 只透传 timeoutMs/retries
-// ＋缺省 30000/0，02 §8.6）。终止强杀（killScript）在 AbortCoordinator（onScriptActive
-// 为其活跃脚本数据源）。
+// N6 重试/backoff/onFailure 路由归 T4-04 PolicyRunner（本组件 policy 只透传 timeoutMs/
+// retries＋缺省 30000/0，02 §8.6；重试编排与出口路由在 RunLoop）。终止强杀（killScript）
+// 在 AbortCoordinator（onScriptActive 为其活跃脚本数据源）。
 import type { FlowNode, LogLevel, ScriptEvent, SpawnScriptReq } from '@constella/shared/ipc';
 import type { NodeDefinition, NodeOut } from '@constella/shared/dsl';
 import type { CommandTransport, Lane, NodeStatus, RunRegistryLike, RunTransport } from './types';
 import { BranchFilter, type BranchRoute } from './branch-filter';
 import { LaneManager } from './lane-manager';
+import { DEFAULT_TIMEOUT_MS } from './policy-runner';
 
 /** 节点被终止（run aborted）——调用方按 skipped 收敛、不交付下游（demo L1910 语义） */
 export class ExecAbortedError extends Error {
@@ -45,9 +47,8 @@ export interface ExecContext {
   setStatus(status: NodeStatus, error?: string): void;
   isAborted(): boolean;
   /**
-   * 断点门闩（human.* 挂起位，T4-03）：T4-03 仅有终止放行（reject ExecAbortedError——
-   * 断点节点 ⊘ 收敛）；resume 确认/跳过交互随 T4-04 HitCoordinator 扩展为带载荷 resolve
-   * （resolve 载荷形=unknown 预留）。
+   * 断点门闩（human.* 挂起位）：T4-04 起由 HitCoordinator 承载——resolve 载荷=交付下游
+   * 数据（confirm=合并值/skip=原始 input）；终止放行=reject ExecAbortedError（⊘ 收敛）。
    */
   holdAtBreakpoint(): Promise<unknown>;
   /** 环境级失败终止（X-3：不走 failBranch——cdpProbe 失败等；置 failed 停派生，run 终态=error） */
@@ -68,8 +69,6 @@ export interface ExecDispatcherDeps {
 const ABORT_STEP_MS = 50;
 /** delay 缺省时长（demo L1906 同值） */
 const DELAY_DEFAULT_MS = 500;
-/** N6 缺省守护 30s（02 §8.6） */
-const DEFAULT_TIMEOUT_MS = 30_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -104,12 +103,13 @@ export class ExecDispatcher {
     return { data: input };
   }
 
-  /** human.* → 断点门闩：waiting＋挂起（终止自动放行；resume 交互随 T4-04 HitCoordinator） */
+  /** human.* → 断点门闩（T4-04 HitCoordinator）：waiting＋挂起——resolve 载荷=交付下游数据
+   *  （confirm=合并值/skip=原始 input 直发，01 A-7.1）；终止放行=reject ExecAbortedError→⊘ 收敛 */
   private async runHuman(node: FlowNode, input: unknown, ctx: ExecContext): Promise<NodeOut> {
     ctx.setStatus('waiting');
     ctx.log('info', `等待人工确认：${node.name}`);
-    await ctx.holdAtBreakpoint(); // 终止放行=reject ExecAbortedError→⊘ 收敛（T4-04 扩展为 resume 载荷）
-    return { data: input };
+    const payload = await ctx.holdAtBreakpoint();
+    return { data: payload };
   }
 
   /** logic.branch → BranchFilter expr 真实求值（T-1 对称语义；求值异常=节点 error） */

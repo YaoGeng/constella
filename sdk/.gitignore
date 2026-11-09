@@ -1,3 +1,8 @@
 # 契约测试生成的 entry 与运行产物（test/contract.test.ts）；py 验收 harness 同用 .tmp/
+# 同构/esbuild 回归/wheel 冒烟（test/isomorphism.mjs·esbuild-regression.mjs·scripts/build-py.mjs）亦然
 .tmp/
 __pycache__/
+# setuptools 冒烟残留（scripts/build-py.mjs 构建后清理，此为兜底）
+py/constella_sdk.egg-info/
+# dist 构建＋打包冒烟产物（scripts/build.mjs，prepack 生成、不入库）
+dist/

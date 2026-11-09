@@ -1,8 +1,9 @@
 // NodeCard —— 192px 玻璃卡片（T3-02；C-01 §3 NodeCard/PortGroup 行；demo L1354-1387/L1761
-// 行号溯源的 xyflow 语义等价移植）。
+// 行号溯源的 xyflow 语义等价移植；T4-04 接线 idle 态适配）。
 //
 // 按 data.type 读 C-05 定义渲染（registry 经 CanvasRegistryContext 注入——不逐 type 注册组件）：
-// 图标/名称/状态徽标（五态 ⋯✓✗⊘⏸）/「类目·类型」行（✨=custom 尾标）/参数预览首参
+// 图标/名称/状态徽标（五态 ⋯✓✗⊘⏸；idle=未运行不入 statuses——无徽标无状态 class，demo
+// L1761 idle 语义）/「类目·类型」行（✨=custom 尾标）/参数预览首参
 // 「key: value」26 字截断（value 截断，demo L1354-1358）/broken ⚠（isBroken，02 §8.2）。
 // PortGroup 内嵌：按 N2 outs 动态多 Handle（出口沿卡片高度等分＋文字标签，仅多出口）；
 // ins=[] 触发节点无入口 Handle（A-3.2）。
@@ -61,18 +62,18 @@ export function NodeCard({ id, data, selected }: NodeCardProps) {
     <div
       className={cn(
         'cn-node',
-        `cn-node--${status}`,
+        status !== undefined && `cn-node--${status}`,
         selected && 'cn-node--selected',
         broken && 'cn-node--broken',
       )}
       data-node-type={d.type}
-      data-status={status}
+      data-status={status ?? 'idle'}
       data-broken={broken || undefined}
     >
       <div className="cn-node__head">
         <span className="cn-node__icon">{meta.icon}</span>
         <span className="cn-node__name">{d.name ?? meta.name}</span>
-        <span className={cn('cn-node__badge', `cn-node__badge--${status}`)}>{STATUS_BADGE[status]}</span>
+        {status !== undefined && <span className={cn('cn-node__badge', `cn-node__badge--${status}`)}>{STATUS_BADGE[status]}</span>}
       </div>
       <div className="cn-node__type">
         {meta.category} · {d.type}

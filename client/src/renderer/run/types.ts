@@ -38,6 +38,13 @@ export interface RunHandle {
   statuses: Readonly<Record<string, string>>;
 }
 
+/**
+ * 断点恢复决策（§1 resumeHit 载荷；01 A-7.1 对齐 LangGraph Command(resume)）：
+ * confirm=合并由调用方完成（merge(input,picks,extra)），本卡校验 hitId 存在后交付下游；
+ * skip=跳过——原始 input 直发。
+ */
+export type ResumeDecision = { kind: 'confirm'; merged: unknown } | { kind: 'skip' };
+
 /** 日志事件行（§1 onRunLog；形=logs 表行去 id——02 §7.1 logs 列） */
 export interface LogLine {
   ts: string;

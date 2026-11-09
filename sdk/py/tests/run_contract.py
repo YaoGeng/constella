@@ -308,6 +308,14 @@ def main() -> int:
         return 1
     expected = load_expected()
 
+    # T4-12 两包 semver 恒等断言（K-01 §6.4c）：py __version__ ↔ sdk/package.json version
+    # （场景计数外的前置断言——不恒等即 fail fast，不进 12 场景集合）。
+    ts_version = json.loads((SDK_ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+    assert _sdk().__version__ == ts_version, (
+        f"两包 version 不恒等: py={_sdk().__version__} ts={ts_version}（K-01 §6.4c）"
+    )
+    print(f"[ok] version 恒等 ts=py={ts_version}")
+
     # 装配错误三态＋caps 子进程态（内联期望=ts contract.test.ts 同文）
     assembly: list[tuple[Expected, dict[str, str]]] = [
         (
