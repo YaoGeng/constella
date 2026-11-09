@@ -1,5 +1,35 @@
 {
   "name": "@constella/sdk",
-  "version": "0.0.0",
-  "description": "@constella/sdk 占位：正式包为 ts+py 双运行时同构契约（02 §14），M4 出卡后落型"
+  "version": "0.1.0",
+  "private": true,
+  "description": "@constella/sdk ts 侧（02 §14 冻结契约）：NodeCtx 类型面＋identity 参考实现（.）＋子进程 bootstrap trampoline（./bootstrap）；py 同构包（sdk/py）随 T4-11 落位",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./bootstrap": {
+      "types": "./src/bootstrap.ts",
+      "import": "./src/bootstrap.ts",
+      "default": "./src/bootstrap.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@constella/sdk": "workspace:*",
+    "@constella/shared": "workspace:*",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "vitest": "5.1.0"
+  }
 }

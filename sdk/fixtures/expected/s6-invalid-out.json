@@ -1,0 +1,13 @@
+{
+  "id": "s6-invalid-out",
+  "ctx": { "params": {}, "input": 1 },
+  "exit": 1,
+  "frames": [
+    {
+      "type": "error",
+      "name": "SdkError",
+      "message": "run 返回值须恰含 data 或 branch 之一（02 §14 NodeOut）",
+      "code": "OUT_INVALID"
+    }
+  ]
+}

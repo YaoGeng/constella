@@ -1,0 +1,9 @@
+{
+  "id": "s2-compute",
+  "ctx": { "params": { "factor": 10 }, "input": 4 },
+  "exit": 0,
+  "frames": [
+    { "type": "log", "msg": "factor=10, input=4" },
+    { "type": "result", "out": { "data": { "score": 40 } } }
+  ]
+}

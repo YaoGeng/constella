@@ -1,0 +1,9 @@
+{
+  "id": "s4-error",
+  "ctx": { "params": { "reason": "auth" }, "input": null },
+  "exit": 1,
+  "frames": [
+    { "type": "log", "msg": "about to fail" },
+    { "type": "error", "name": "Error", "message": "boom: auth", "code": null }
+  ]
+}

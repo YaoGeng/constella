@@ -1,0 +1,9 @@
+{
+  "id": "s5-branch",
+  "ctx": { "params": {}, "input": 7 },
+  "exit": 0,
+  "frames": [
+    { "type": "emit", "branch": "odd", "payload": { "n": 7 } },
+    { "type": "result", "out": { "branch": "done", "doubled": 14 } }
+  ]
+}

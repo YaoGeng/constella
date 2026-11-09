@@ -1,0 +1,11 @@
+{
+  "id": "s3-relative-import",
+  "ctx": { "params": { "key": "  Constella  " }, "input": "s5" },
+  "exit": 0,
+  "frames": [
+    {
+      "type": "result",
+      "out": { "data": { "key": "constella", "tags": "Alpha|Beta|Gamma", "hash": "1351a9738682" } }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "id": "s1-basic",
+  "ctx": { "params": {}, "input": { "n": 42 } },
+  "exit": 0,
+  "frames": [{ "type": "result", "out": { "data": { "n": 42 } } }]
+}
