@@ -3,6 +3,7 @@
 // 本文件只冻结 AppRuntime 启动/退出双序编排调用的服务生命周期面；各服务本体接口/组件级签名
 // 以其归属卡（§3 组件行）为准——接入时由装配层（index.ts）适配到本面，不在本卡预实装。
 import type { LaneMemory } from '@constella/shared/ipc';
+import type { InvokeRegistry } from './domain-channels';
 
 /** StorageService（T4-20 接入）：storage:invoke 桥接 C-06；open 装配序归 StorageLayer（C-06）。 */
 export interface StorageServiceSlot {
@@ -18,13 +19,22 @@ export interface StorageServiceSlot {
 
 /** SecretVault（T4-15 接入）：safeStorage 可用性探测（不可用→SECRET-UNAVAILABLE 降级）。 */
 export interface SecretVaultSlot {
-  init(): void | Promise<void>;
+  /**
+   * 启动序：可用性探测（须 app ready 后——safeStorage 系统钥匙串就绪前提）＋vault.bin 载入＋
+   * secret:set/get/del 三通道挂载（T4-15）。options.registry=通道注册面（缺省 AppRuntime.ipc
+   * 〔IpcGateway〕；AppRuntimeDeps.invokeRegistry 测试注入缝）。
+   */
+  init(options: { registry: InvokeRegistry }): void | Promise<void>;
 }
 
 /** CdpSessionManager（T4-18 接入）：lane 执行面。 */
 export interface CdpSessionManagerSlot {
-  /** 启动序：init（PortPool 预热） */
-  init(): void | Promise<void>;
+  /**
+   * 启动序：init（PortPool 预热〔全段探活——创建前探活前置〕＋cdp:*＋env:cdpProbe 六通道挂载）。
+   * options.registry=通道注册面（缺省 AppRuntime.ipc〔IpcGateway〕；AppRuntimeDeps.invokeRegistry
+   * 测试注入缝——SecretVaultSlot.init 同形，T4-15 先例）。
+   */
+  init(options: { registry: InvokeRegistry }): void | Promise<void>;
   /** 退出序：销毁全部 lane 窗（此阶段才允许窗口全空——S-3 坑②） */
   destroyAllLaneWindows(): void | Promise<void>;
   /**

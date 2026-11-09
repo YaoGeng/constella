@@ -1,14 +1,15 @@
-// createRunEngine —— 运行调度装配面（TDD-C-03 §1 接口契约；T4-01 骨架＋T4-02 执行循环接线）。
+// createRunEngine —— 运行调度装配面（TDD-C-03 §1 接口契约；T4-01 骨架＋T4-02 执行循环
+// ＋T4-03 级联/收敛/终止接线）。
 // 本卡落：startRun（RunGate 三查＋附加拦截前置 → runs.create → TopoPlanner 规划 →
-// 不可达预标 ⊘ → 启动日志 → RunLoop 启动〔lane/扇出/汇合/交付路由/ExecDispatcher〕）
-// / abortRun（置 aborted 标志〔delay 可中断/停派生〕＋骨架收尾：台账停跳＋runs.finish(aborted)
-// ＋warn 日志）/ onNodeStatus·onRunLog 事件面 / RunLedger 台账心跳 / cron:fired 复查三闸后
-// startRun。run 收尾状态映射（done/error＋收敛 ⊘ 兜底）＝T4-03 ConvergenceSweeper——本卡
-// drain 后 run 保持 active（whenSettled=收敛组件接线位）。终止强杀/断连分支归 T4-03，
-// N6 重试/断点协调归 T4-04。
+// 不可达预标 ⊘＋出边级联 → 启动日志 → RunLoop 启动＋AbortCoordinator 注册）/ abortRun
+// （AbortCoordinator 瞬时扩散：置位＋killScript×活跃＋断点放行＋destroyRun 恰一次＋
+// 真实 aborted/failed 计数）/ drain 收尾序（ConvergenceSweeper 收敛→终态 runs.finish→
+// 会话销毁→台账/注册清理——移交项 #6/#7）/ onNodeStatus·onRunLog 事件面 / RunLedger 台账
+// 心跳 / cron:fired 复查三闸后 startRun。
 // IPC 零 Electron 依赖：storage=C-06 renderer 半段注入、cron/脚本/会话通道=注入 Transport（§8 替换点①）。
 import type { FlowDoc, LogLevel } from '@constella/shared/ipc';
 import type { StorageClient } from '../storage';
+import { AbortCoordinator } from './abort-coordinator';
 import { createRunLoop, type RunFlags, type RunLoop } from './run-loop';
 import { RunGate } from './run-gate';
 import { RunLedger } from './run-ledger';
@@ -22,7 +23,7 @@ export interface RunEngineDeps {
   registry: RunRegistryLike;
   /** 脏闸注入位（true=该流程有未保存改动）；应用壳接 flowStore dirty 投影 */
   guardDirty: (flowId: string) => boolean;
-  /** 执行面传输（cron:fired 订阅＋spawnScript/scriptEvent＋cdp 会话通道；缺省=无 cron 源、脚本/cdp 分派抛错） */
+  /** 执行面传输（cron:fired 订阅＋spawnScript/scriptEvent＋cdp 会话通道＋killScript/destroyRun/cdpProbe；缺省=无 cron 源、脚本/cdp 分派抛错） */
   transport?: RunTransport;
   /** 命令传输注入位（cdp.* 内置命令帧——T0-07 冻结帧形；实装=ws client 随 T4-05） */
   commandTransport?: CommandTransport;
@@ -38,15 +39,15 @@ export interface RunEngineDeps {
 export interface RunEngine {
   /** §1 契约签名；闸违例（三查＋附加拦截）→ null＋toast＋err 日志、不产生 run（demo L1792-1796 行为源） */
   startRun(flowId: string, opts?: { source?: 'manual' | 'cron' }): Promise<RunHandle | null>;
-  /** §1 契约签名；置 aborted 标志（执行循环自觉退出）＋骨架收尾（终止扩散原语随 T4-03） */
+  /** §1 契约签名；终止瞬时扩散（置位＋强杀＋断点放行＋会话销毁）＋同步收尾 runs.finish */
   abortRun(runId: string): void;
   /** §1 事件流（不可达预标 ⊘ 与节点执行态同管线派发，laneLabel 随 lane 语义填入） */
   onNodeStatus(fn: (e: NodeStatusEvent) => void): () => void;
   /** §1 日志事件面（事件源=logs.append 双写管线同点派发） */
   onRunLog(fn: (line: LogLine) => void): () => void;
-  /** 契约外：执行循环 drain promise（测试与 T4-03 收敛组件接线用——run 收尾归后续卡） */
+  /** 契约外：执行循环 drain promise（收敛收尾已接线——drain 后 run 落终态并清理注册） */
   whenSettled(runId: string): Promise<void> | undefined;
-  /** 生命周期收口（契约外：停心跳/退订 cron/置终止/清监听——应用壳卸载与测试清理用） */
+  /** 生命周期收口（契约外：停心跳/退订 cron/终止扩散/清监听——应用壳卸载与测试清理用） */
   dispose(): void;
 }
 
@@ -79,6 +80,7 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
     isActiveRun: (flowId) => ledger.activeOf(flowId) !== undefined,
   });
   const planner = new TopoPlanner(registry);
+  const abortor = new AbortCoordinator({ ...(deps.transport !== undefined ? { transport: deps.transport } : {}) });
   const runs = new Map<string, RunState>();
   const statusSubs = new Set<(e: NodeStatusEvent) => void>();
   const logSubs = new Set<(line: LogLine) => void>();
@@ -98,6 +100,56 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
     for (const fn of statusSubs) fn(e);
   }
 
+  function countStatuses(state: RunState, match: (s: string) => boolean): number {
+    return Object.values(state.statuses).filter(match).length;
+  }
+
+  /** runs.finish 落库＋终态日志（fire-and-forget；IPC 故障不阻塞本地收尾，X-3 方向） */
+  function finishRun(runId: string, state: RunState, t0: number, t1: number, status: 'done' | 'error' | 'aborted', aborted: number, failed: number): void {
+    void storage
+      .invoke('runs.finish', {
+        runId,
+        status,
+        t1,
+        aborted,
+        failed,
+        total: state.plan.total,
+        skips: state.plan.skips,
+      })
+      .then(() => {
+        const dur = fmtDur(t1 - t0);
+        if (status === 'error') return appendLog('err', `任务失败 · 用时 ${dur}`, { flowId: state.flowId, runId });
+        if (status === 'aborted') return appendLog('warn', `任务已终止 · 用时 ${dur}`, { flowId: state.flowId, runId });
+        return appendLog('ok', `任务完成 · 用时 ${dur}`, { flowId: state.flowId, runId });
+      })
+      .catch(() => undefined);
+  }
+
+  /** 收尾清理（移交项 #7）：drain 后解除 runs/AbortCoordinator/ledger 注册（历史走 DB 重放） */
+  function cleanupRun(runId: string): void {
+    runs.delete(runId);
+    abortor.unregister(runId);
+    ledger.forget(runId);
+  }
+
+  /** drain 收尾序（§3 AbortCoordinator 复用处「收尾序」）：收敛 → 终态落库 → 会话销毁 → 清理 */
+  function wireSettleSequence(runId: string, state: RunState): void {
+    const loop = state.loop;
+    if (loop === undefined) return;
+    void loop.done.then(() => {
+      if (!state.finished) {
+        state.finished = true;
+        const outcome = loop.converge();
+        const t1 = now();
+        const t0 = ledger.get(runId)?.t0 ?? t1;
+        ledger.close(runId, outcome.status);
+        void abortor.destroySessions(runId);
+        finishRun(runId, state, t0, t1, outcome.status, outcome.abortedCount, outcome.failedCount);
+      }
+      cleanupRun(runId); // close 后清理（abort 路径同样经此收口——移交项 #7）
+    });
+  }
+
   async function startRun(flowId: string, opts: { source?: 'manual' | 'cron' } = {}): Promise<RunHandle | null> {
     void opts.source; // 手动/cron 共用闸（01 A-6.6）；来源分域日志随后续卡消费
     const doc: FlowDoc = await storage.invoke('flows.get', { id: flowId });
@@ -109,7 +161,8 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
     }
     const plan = planner.plan(doc);
     const { id: runId } = await storage.invoke('runs.create', { flowId, name: doc.name });
-    ledger.open({ runId, flowId, name: doc.name, t0: now() });
+    const t0 = now();
+    ledger.open({ runId, flowId, name: doc.name, t0 });
     const statuses: Record<string, string> = {};
     const flags: RunFlags = { aborted: false, failed: false };
     const state: RunState = { flowId, name: doc.name, statuses, plan, finished: false, flags };
@@ -140,6 +193,8 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
       emitStatus,
     });
     state.loop = loop;
+    abortor.register(runId, loop.abort);
+    wireSettleSequence(runId, state);
     loop.start();
     return { runId, statuses };
   }
@@ -149,23 +204,17 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
     if (run === undefined || run.finished) return;
     const entry = ledger.activeOf(run.flowId);
     if (entry === undefined || entry.runId !== runId) return; // 已收尾 → no-op（幂等）
-    run.flags.aborted = true; // 执行循环自觉退出位（delay 步进/派生闸；demo L1785）
+    // 终止瞬时扩散（02 §10 #8）：置位（停派生＋50ms 步进自觉退出）＋killScript×活跃＋
+    // waiting 断点自动放行＋CDP 会话销毁恰一次（AbortCoordinator）
+    if (!abortor.abort(runId)) run.flags.aborted = true; // 未注册（loop 未建）回退直接置位
+    void abortor.destroySessions(runId);
     run.finished = true;
     const t1 = now();
-    ledger.close(runId, 'aborted');
-    // 落库 fire-and-forget（契约 void）；终止扩散原语（killScript/会话销毁/断点放行）随 T4-03 接入
-    void storage
-      .invoke('runs.finish', {
-        runId,
-        status: 'aborted',
-        t1,
-        aborted: 0,
-        failed: 0,
-        total: run.plan.total,
-        skips: run.plan.skips,
-      })
-      .then(() => appendLog('warn', `任务已终止 · 用时 ${fmtDur(t1 - entry.t0)}`, { flowId: run.flowId, runId }))
-      .catch(() => undefined); // IPC 断连等环境级故障不阻塞本地收尾（X-3 语义方向）
+    const status = run.flags.failed ? 'error' : 'aborted'; // demo L1946：failed 优先
+    ledger.close(runId, status);
+    ledger.forget(runId);
+    // 真实计数（移交项 #6）：aborted=终止波及的 running/waiting 快照（此后统一 ⊘）、failed=error 节点
+    finishRun(runId, run, entry.t0, t1, status, countStatuses(run, (s) => s === 'running' || s === 'waiting'), countStatuses(run, (s) => s === 'error'));
   }
 
   // cron:fired → 复查三闸后 startRun（01 A-6.6；闸拒绝=cron 触发静默不产生 run＋日志）
@@ -194,9 +243,10 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
       cronUnsub?.();
       cronUnsub = null;
       if (ownLedger) ledger.dispose();
-      for (const run of runs.values()) {
-        if (!run.finished) run.flags.aborted = true; // 残留活动 run 置终止（delay/派生闸自觉退出）
+      for (const [runId, run] of runs) {
+        if (!run.finished && !abortor.abort(runId)) run.flags.aborted = true; // 残留活动 run 终止扩散（强杀＋放行）
       }
+      runs.clear();
       statusSubs.clear();
       logSubs.clear();
     },

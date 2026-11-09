@@ -1,0 +1,23 @@
+# constella-sdk —— py 同构运行时（K-01 §1 py 段；发行名 constella-sdk，D-10 命名空间对齐）。
+# 零三方依赖（stdlib only，K-01 §2 红线）；py.typed 随包（PEP 561）。
+# version 单一来源=constella_sdk.__version__（与 ts 侧 sdk/package.json version 恒等——
+# T4-12 两包 semver 恒等断言）；wheel 构建冒烟归 T4-12。
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "constella-sdk"
+description = "Constella py isomorphic runtime: NodeCtx type surface + identity run + bootstrap trampoline (02 §14 frozen contract, TDD-K-01 py side)"
+requires-python = ">=3.12"
+dependencies = []
+dynamic = ["version"]
+
+[tool.setuptools]
+packages = ["constella_sdk"]
+
+[tool.setuptools.package-data]
+constella_sdk = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "constella_sdk.__version__" }

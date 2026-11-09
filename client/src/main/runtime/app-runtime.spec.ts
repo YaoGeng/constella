@@ -118,6 +118,20 @@ describe('AppRuntime 启动序（C-M1 §3 生命周期段全序）', () => {
     await expect(runtime.startup()).rejects.toThrow(/startup/);
   });
 
+  it('cdp.init 收到 registry＝AppRuntime.ipc（IpcGateway——cdp:*＋env:cdpProbe 六通道挂载面，T4-18）', async () => {
+    const received: Array<{ registry: unknown } | undefined> = [];
+    const services = makeServiceMocks([], []);
+    services.cdp = {
+      init: (options) => {
+        received.push(options);
+      },
+      destroyAllLaneWindows: () => {},
+    };
+    const { runtime } = await boot({ services });
+    expect(received).toHaveLength(1);
+    expect(received[0]?.registry).toBe(runtime.ipc);
+  });
+
   it('ExamplePreloader 挂载步：storage.init 恒收到 preloadExamples 回调（显式注入时原样传递）', async () => {
     const marker = (): void => {};
     const { storageInitOptions } = await boot({ preloadExamples: marker });

@@ -32,6 +32,9 @@ function fakeTransport(startPort = 9221) {
       navigations.push(req);
       return { ok: true };
     },
+    killScript: async () => ({ ok: true }),
+    cdpDestroyRun: async () => ({ ok: true }),
+    envCdpProbe: async () => ({ ok: true }),
   };
   return { transport, sessions, navigations };
 }

@@ -50,6 +50,16 @@ export class RunLedger {
     return entry;
   }
 
+  /**
+   * 收尾后清理 entry（T4-03 收敛接线，移交项 #7——长生命周期不泄漏）：历史查询走 DB
+   * （runs.get＋logs.list 重放归任务中心消费），内存台账只承载 active 心跳。active run 防御性不清。
+   */
+  forget(runId: string): void {
+    const entry = this.entries.get(runId);
+    if (entry !== undefined && this.isActive(entry)) return;
+    this.entries.delete(runId);
+  }
+
   /** 同流程 active run（RunGate 重复闸查询位）；无 → undefined */
   activeOf(flowId: string): LedgerEntry | undefined {
     return this.activeEntries().find((e) => e.flowId === flowId);

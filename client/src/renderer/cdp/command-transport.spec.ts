@@ -16,12 +16,14 @@ import {
 /** 最小 WebSocket fake（事件驱动面＝transport 所需子集；serverOpen/serverMessage 为测试驱动面） */
 class FakeWebSocket implements WebSocketLike {
   readonly sent: string[] = [];
+  closeCalls = 0;
   private readonly listeners = new Map<string, Array<(ev: { data?: string }) => void>>();
   constructor(readonly url: string) {}
   send(data: string): void {
     this.sent.push(data);
   }
   close(): void {
+    this.closeCalls += 1;
     this.emit('close');
   }
   addEventListener(type: 'open' | 'message' | 'close' | 'error', listener: (ev: { data?: string }) => void): void {
@@ -161,6 +163,34 @@ describe('连接故障映射（T0-07 帧错误码集）', () => {
     transport.close();
     transport.close(); // 幂等
     await expect(p).rejects.toMatchObject({ code: 'BRIDGE-CLOSED' });
+  });
+
+  // —— T4-05 评审移交两守卫（T4-18 落实）——
+  it('close()-during-connecting 竞态：建连中 close 后迟到的 open 不发帧、socket 即关（无泄漏）', async () => {
+    const { transport, sock } = makeTransport();
+    const p = transport.send('Page.enable', {});
+    for (let i = 0; i < 5 && transport; i += 1) await Promise.resolve(); // socket 已建、未 open（connecting）
+    transport.close(); // 连接未开即关——closed=true 而 socket 引用尚未登记
+    sock().serverOpen(); // 迟到的 open 回调
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(sock().sent).toHaveLength(0); // open 回调内复查 closed——一帧未发
+    expect(sock().closeCalls).toBeGreaterThanOrEqual(1); // socket 已关（不泄漏）
+    await expect(p).rejects.toMatchObject({ code: 'BRIDGE-CLOSED' });
+  });
+
+  it('畸形 ok:false 帧（缺 error 字段）不致回调内 TypeError——忽略后超时兜底', async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, sock, openAndFlush } = makeTransport({ sendTimeoutMs: 1000 });
+      const p = transport.send('Page.enable', {});
+      const assertion = expect(p).rejects.toMatchObject({ code: 'BRIDGE-TIMEOUT' });
+      await openAndFlush();
+      expect(() => sock().serverMessage(JSON.stringify({ id: 1, ok: false }))).not.toThrow();
+      await vi.advanceTimersByTimeAsync(1001);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

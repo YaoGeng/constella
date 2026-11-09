@@ -81,14 +81,17 @@ export function createCommandTransport(
     pending.clear();
   };
 
-  /** 响应帧形守卫（T0-07 冻结形：{id,ok,result}｜{id,ok:false,error:{code,message}}；畸形帧=忽略） */
+  /** 响应帧形守卫（T0-07 冻结形：{id,ok,result}｜{id,ok:false,error:{code,message}}；畸形帧=忽略）。
+   *  ok:false 帧须带 error 对象（缺形→按畸形忽略——回调内 TypeError 防守，T4-05 评审移交②） */
   const isResponseFrame = (v: unknown): v is BridgeResponse =>
     typeof v === 'object' &&
     v !== null &&
     'id' in v &&
     typeof v.id === 'number' &&
     'ok' in v &&
-    typeof v.ok === 'boolean';
+    typeof v.ok === 'boolean' &&
+    (((v as { ok: boolean }).ok as boolean) ||
+      (typeof (v as { error?: unknown }).error === 'object' && (v as { error?: unknown }).error !== null));
 
   const onMessage = (ev: { data?: string }): void => {
     let parsed: unknown;
@@ -131,6 +134,17 @@ export function createCommandTransport(
           s.addEventListener('message', onMessage);
         });
         socket = s; // open 已确认——后续 send 直连、close() 可及
+        if (closed) {
+          // close()-during-connecting 竞态（T4-05 评审移交①）：建连中 close 后迟到的 open
+          // 不得复活已关 transport——登记引用并即关 socket（不泄漏），send 拒 BRIDGE-CLOSED
+          try {
+            s.close();
+          } catch {
+            /* best-effort：socket 侧关不作为（对端断连自然收口） */
+          }
+          socket = null;
+          throw new BridgeCommandError(BRIDGE_ERROR_CODES.BRIDGE_CLOSED, `lane 桥连接已关闭：${url}`);
+        }
         return s;
       })();
       void connecting.catch(() => {

@@ -22,6 +22,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:py": "py -I -X utf8 py/tests/run_contract.py",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {},

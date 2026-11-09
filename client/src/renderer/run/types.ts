@@ -4,8 +4,14 @@ import type { NodeDefinition } from '@constella/shared/dsl';
 import type {
   BridgeRequest,
   BridgeResponse,
+  CdpProbeReq,
+  CdpProbeRes,
   CreateSessionReq,
   CreateSessionRes,
+  DestroyRunReq,
+  DestroyRunRes,
+  KillScriptReq,
+  KillScriptRes,
   LogLevel,
   NavigateReq,
   NavigateRes,
@@ -70,7 +76,8 @@ export interface Lane {
 /**
  * 执行面传输注入位（§8 替换点①——实装=preload 面，协议不变）；缺省=无 cron 源＋脚本/会话通道不可用
  * （custom/cdp.* 分派抛错=节点 error）。T4-01 起含 cron；T4-02 扩 run:spawnScript/run:scriptEvent
- * ＋cdp:createSession/cdp:navigate（02 §3.4；killScript/destroyRun/env:cdpProbe 随 T4-03 续扩）。
+ * ＋cdp:createSession/cdp:navigate；T4-03 续扩 run:killScript/cdp:destroyRun/env:cdpProbe
+ * （02 §3.4——终止扩散原语＋CDP 探活断连分支）。
  */
 export interface RunTransport {
   /** cron 到点推送（cron:fired，02 §3.4）——到点复查三闸后 startRun（01 A-6.6） */
@@ -83,6 +90,12 @@ export interface RunTransport {
   cdpCreateSession(req: CreateSessionReq): Promise<CreateSessionRes>;
   /** cdp:navigate：同 lane 后续 cdp.* 复用会话只更新 URL（A-8.1） */
   cdpNavigate(req: NavigateReq): Promise<NavigateRes>;
+  /** run:killScript（r→m）：终止扩散——活跃脚本进程树强杀（in-band 幂等，已退出亦 ok；T4-03） */
+  killScript(req: KillScriptReq): Promise<KillScriptRes>;
+  /** cdp:destroyRun（r→m）：run 收尾统一销毁 lane 会话（幂等恰一次；保 dock 主窗=S-3 坑②；T4-03） */
+  cdpDestroyRun(req: DestroyRunReq): Promise<DestroyRunRes>;
+  /** env:cdpProbe（r→m）：CDP 环境探活（失败→cdp.* error＋run 失败终止不走 failBranch，X-3；T4-03） */
+  envCdpProbe(req: CdpProbeReq): Promise<CdpProbeRes>;
 }
 
 /**

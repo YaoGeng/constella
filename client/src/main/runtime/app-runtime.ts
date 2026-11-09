@@ -116,10 +116,12 @@ export class AppRuntime {
     await this.deps.services?.storage?.init({
       preloadExamples: this.deps.preloadExamples ?? noopPreloadExamples,
     });
-    // 5) SecretVault.init（T4-15：safeStorage 可用性探测）
-    await this.deps.services?.vault?.init();
-    // 6) CdpSessionManager.init（T4-18：PortPool 预热）
-    await this.deps.services?.cdp?.init();
+    // 5) SecretVault.init（T4-15：safeStorage 可用性探测〔须 app ready 后〕＋vault.bin 载入＋
+    //    secret:set/get/del 三通道挂载——registry=缺省 runtime.ipc〔IpcGateway〕/测试注入缝）
+    await this.deps.services?.vault?.init({ registry: this.deps.invokeRegistry ?? this.ipc });
+    // 6) CdpSessionManager.init（T4-18：PortPool 预热＋cdp:*＋env:cdpProbe 六通道挂载——
+    //    registry=缺省 runtime.ipc〔IpcGateway〕/测试注入缝）
+    await this.deps.services?.cdp?.init({ registry: this.deps.invokeRegistry ?? this.ipc });
     // 7) 主窗加载 renderer
     this.createMainWindow();
     // 8) CronScheduler.start（T4-19：读 flows/nodes 提取 trigger.cron＋missed 检测）

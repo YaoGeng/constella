@@ -121,7 +121,7 @@ function makeEnv(
   return { calls, engine, ledger, toasts };
 }
 
-/** fake Transport：手动收集/触发 cron:fired 订阅（T4-02 起 RunTransport 扩脚本/会话通道——cron 用例仅消费 cron 面，其余打桩拒绝） */
+/** fake Transport：手动收集/触发 cron:fired 订阅（T4-02 起扩脚本/会话通道、T4-03 起扩终止/探活——cron 用例仅消费 cron 面，其余打桩拒绝） */
 function fakeTransport() {
   const subs: ((e: { flowId: string }) => void)[] = [];
   const transport: RunTransport = {
@@ -135,6 +135,15 @@ function fakeTransport() {
     },
     cdpNavigate: async () => {
       throw new Error('fakeTransport（cron 用例）未实现 cdpNavigate');
+    },
+    killScript: async () => {
+      throw new Error('fakeTransport（cron 用例）未实现 killScript');
+    },
+    cdpDestroyRun: async () => {
+      throw new Error('fakeTransport（cron 用例）未实现 cdpDestroyRun');
+    },
+    envCdpProbe: async () => {
+      throw new Error('fakeTransport（cron 用例）未实现 envCdpProbe');
     },
   };
   return { transport, fire: (flowId: string) => subs.forEach((fn) => fn({ flowId })) };
@@ -280,7 +289,9 @@ describe('RunEngine §6.1b 孤立节点启动即 ⊘', () => {
 describe('RunEngine/RunLedger §6.1c 双流程并行心跳独立', () => {
   it('两流程并行：runId 各异、心跳独立推进；abort 一方不影响另一方', async () => {
     vi.useFakeTimers();
-    const env = makeEnv({ f1: MAIN_CHAIN, f4: flowDoc('f4', [node('t1', 'trigger.manual'), node('a', 'delay')], [edge('t1', 'a')]) });
+    // 长延时保持两 run 在途（T4-03 收敛接线后短 run 会自然收尾出账）
+    const longChain = (id: string) => flowDoc(id, [node('t1', 'trigger.manual'), node('a', 'data.transform'), node('b', 'delay', { params: { ms: 60_000 } })], [edge('t1', 'a'), edge('a', 'b')]);
+    const env = makeEnv({ f1: longChain('f1'), f4: longChain('f4') });
     const h1 = await env.engine.startRun('f1');
     const h4 = await env.engine.startRun('f4');
     expect(h1?.runId).toBe('r1');
@@ -294,7 +305,7 @@ describe('RunEngine/RunLedger §6.1c 双流程并行心跳独立', () => {
 
     env.engine.abortRun('r1');
     await vi.advanceTimersByTimeAsync(2000);
-    expect(env.ledger.beatOf('r1')).toBe(3); // 已收尾：停跳
+    expect(env.ledger.get('r1')).toBeUndefined(); // 终止收尾＋drain 后清理（T4-03 移交项 #7）：不再计拍
     expect(env.ledger.beatOf('r2')).toBe(5); // 另一流程心跳不受扰
     expect(env.ledger.activeOf('f1')).toBeUndefined();
     expect(env.ledger.activeOf('f4')?.runId).toBe('r2');
@@ -320,7 +331,7 @@ describe('RunEngine/RunLedger §6.1c 双流程并行心跳独立', () => {
 
   it('同流程重复拒绝不影响既有 run：f4 仍 active 心跳推进', async () => {
     vi.useFakeTimers();
-    const env = makeEnv({ f1: MAIN_CHAIN, f4: MAIN_CHAIN });
+    const env = makeEnv({ f1: flowDoc('f1', [node('t1', 'trigger.manual'), node('b', 'delay', { params: { ms: 60_000 } })], [edge('t1', 'b')]) });
     await env.engine.startRun('f1');
     const dup = await env.engine.startRun('f1');
     expect(dup).toBeNull();
@@ -411,6 +422,9 @@ function makeExecTransport() {
       navigations.push({ runId: req.runId, laneKey: req.laneKey, url: req.url });
       return { ok: true };
     },
+    killScript: async () => ({ ok: true }),
+    cdpDestroyRun: async () => ({ ok: true }),
+    envCdpProbe: async () => ({ ok: true }),
   };
   const exit0 = (nodeRunId: string): void => {
     for (const fn of scriptSubs) fn({ nodeRunId, kind: 'exit', code: 0, ms: 5 });
@@ -529,7 +543,7 @@ describe('RunEngine §6.3 NodeOut 路由（02 §14）', () => {
     const handle = await env.engine.startRun('f1');
     await env.engine.whenSettled(handle!.runId);
     expect(handle?.statuses).toMatchObject({ b: 'done', c1: 'done' });
-    expect(handle?.statuses.c2).toBeUndefined(); // 未命中支不执行（级联 ⊘ 归 T4-03）
+    expect(handle?.statuses.c2).toBe('skipped'); // 未命中支不执行＋死边级联 ⊘（T4-03 DeadEdgeCascader）
     const inputOf = (id: string): unknown => fx.spawns.find((s) => s.nodeRunId === `r1:${id}`)?.input;
     expect(inputOf('c1')).toEqual({ score: 9, tag: 'hot' }); // input=meta（去 branch 键）
     expect(fx.spawns.some((s) => s.nodeRunId === 'r1:c2')).toBe(false); // 只发命中边
@@ -551,7 +565,7 @@ describe('RunEngine §6.3 NodeOut 路由（02 §14）', () => {
     const handle = await env.engine.startRun('f1');
     await env.engine.whenSettled(handle!.runId);
     expect(handle?.statuses).toMatchObject({ b: 'error' });
-    expect(handle?.statuses.c1).toBeUndefined(); // 失败终止：不再派生
+    expect(handle?.statuses.c1).toBe('skipped'); // 失败停派生：c1 不执行、收敛统一 ⊘（demo L1942-1945）
     expect(fx.spawns.some((s) => s.nodeRunId === 'r1:c1')).toBe(false);
     expect(env.toasts[0]).toMatchObject({ level: 'err', msg: expect.stringContaining('任务失败') });
     const bFinish = env.calls.find((c) => c.op === 'runs.nodeRunFinish' && (c as { args: { nodeRunId: string } }).args.nodeRunId === 'r1:b');
@@ -582,7 +596,7 @@ describe('RunEngine §6.3 NodeOut 路由（02 §14）', () => {
     await env.engine.whenSettled(handle!.runId);
     expect(fx.spawns.filter((s) => s.nodeRunId === 'r1:r')).toHaveLength(1); // 单进程（inner 共享）
     expect(handle?.statuses).toMatchObject({ r: 'done', e: 'done' });
-    expect(handle?.statuses.p).toBeUndefined(); // replied 未 emit——不交付
+    expect(handle?.statuses.p).toBe('skipped'); // replied 未 emit——不交付＋死边级联 ⊘（T4-03）
     const eInput = fx.spawns.find((s) => s.nodeRunId === 'r1:e')?.input;
     expect(eInput).toEqual({ session: 's1' }); // emit payload 交付命中边
     // 提前出口：下游 e 的 running 先于组合节点 r 的 done

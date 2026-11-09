@@ -1,17 +1,24 @@
-// RunLoop —— 执行循环体（TDD-C-03 §3 各组件的复用处「RunLoop」；demo L1818-1955 行为源；T4-02）。
+// RunLoop —— 执行循环体（TDD-C-03 §3 各组件的复用处「RunLoop」；demo L1818-1955 行为源；
+// T4-02 执行链＋T4-03 级联/收敛/终止接线）。
 // 编排：触发器派生（lane=main/t:<id>）→ ExecDispatcher 执行 → DeliveryRouter 交付（{data}
-// 全存活出边/{branch} 命中边）→ 汇合就绪再派生；inflight 归零即 drain（done promise）。
+// 全存活出边/{branch} 命中边——未命中边经 DeadEdgeCascader 向下级联 ⊘）→ 汇合就绪再派生；
+// inflight 归零 drain → ConvergenceSweeper 收敛（环/依赖缺失/终止波及统一 ⊘＋终态）。
 // 双写：statuses=数据源 → onNodeStatus 事件 → runs.nodeRunStart/nodeRunFinish/logs.append
 // 经 storage 落库（A-6.5；管线集中化=StatusBus 随 T4-04 收口，本卡内联双写）。
-// 边界（后续卡）：死边归零级联 ⊘/环收敛兜底/run 收尾状态映射＝T4-03（ConvergenceSweeper——
-// 本卡 drain 后 run 保持 active，收敛组件接入 done 接线）；终止强杀/断连分支＝T4-03；
-// N6 重试/onFailure 路由/断点协调＝T4-04（本卡节点 error=失败停派生，demo L1900 语义）。
+// 终止扩散原语（AbortCoordinator 挂钩）：置 aborted 标志（停派生＋delay 50ms 步进自觉退出）
+// ＋活跃脚本快照（killScript 数据源）＋waiting 断点自动放行（门闩 reject→⊘ 收敛；
+// resume 交互归 T4-04）。
+// 边界（后续卡）：N6 重试/onFailure 路由＝T4-04 PolicyRunner（本卡环境级失败〔cdpProbe
+// 断连等 X-3〕经 ctx.failRun 置 failed 停派生；节点 error=失败停派生，demo L1900 语义）。
 import type { FlowDoc, FlowEdge, LogLevel } from '@constella/shared/ipc';
 import type { StorageClient } from '../storage';
+import { DeadEdgeCascader } from './branch-filter';
+import { ConvergenceSweeper, type ConvergeOutcome } from './convergence-sweeper';
 import { DeliveryRouter } from './delivery-router';
 import { ExecAbortedError, ExecDispatcher, type ExecContext } from './exec-dispatcher';
 import { LaneManager } from './lane-manager';
 import { findTriggers, type TopoPlan } from './topo-planner';
+import type { AbortHooks } from './abort-coordinator';
 import type { CommandTransport, Lane, NodeStatus, NodeStatusEvent, NotifyFn, RunRegistryLike, RunTransport } from './types';
 
 /** run 级标志（engine 与 loop 共享引用：abortRun 置 aborted；节点失败置 failed 停派生） */
@@ -40,25 +47,37 @@ export interface RunLoopDeps {
   emitStatus(e: NodeStatusEvent): void;
 }
 
+/** drain 后收敛结果（engine 收尾序消费：runs.finish 计数与终态） */
+export type RunConvergeOutcome = ConvergeOutcome & { abortedCount: number; failedCount: number };
+
 export interface RunLoop {
   /** lane 台账（会话投影/laneLabel 事件源） */
   lanes: LaneManager;
-  /** inflight 归零 drain promise（T4-03 收敛组件接线位） */
+  /** inflight 归零 drain promise（engine 收尾序接线） */
   done: Promise<void>;
-  /** 启动：静态不可达出边预杀＋触发器派生 */
+  /** 启动：静态不可达出边预杀（级联）＋触发器派生 */
   start(): void;
+  /** AbortCoordinator 挂钩（终止瞬时扩散三原语的数据源） */
+  abort: AbortHooks;
+  /** 收敛（drain 后调用一次）：剩余节点统一 ⊘＋终态与计数（02 §10 #7） */
+  converge(): RunConvergeOutcome;
 }
 
 export function createRunLoop(deps: RunLoopDeps): RunLoop {
   const { runId, doc, plan, statuses, registry, storage, now, flags } = deps;
   const lanes = new LaneManager({ runId, ...(deps.transport ? { transport: deps.transport } : {}) });
   const router = new DeliveryRouter({ doc, registry, lanes });
+  const activeScripts = new Set<string>();
   const dispatcher = new ExecDispatcher({
     registry,
     lanes,
     runId,
     ...(deps.transport ? { transport: deps.transport } : {}),
     ...(deps.commandTransport ? { commandTransport: deps.commandTransport } : {}),
+    onScriptActive: (nodeRunId, active) => {
+      if (active) activeScripts.add(nodeRunId);
+      else activeScripts.delete(nodeRunId);
+    },
   });
 
   const nodeOf = (id: string) => doc.nodes.find((n) => n.id === id);
@@ -68,8 +87,10 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
     return n === undefined ? undefined : registry.get(n.type);
   };
   const defName = (id: string): string => defOf(id)?.meta.name ?? nodeName(id);
+  const statusOf = (id: string): NodeStatus | undefined => statuses[id] as NodeStatus | undefined;
 
   let inflight = 0;
+  let abortSkips = 0; // 终止波及计数（在途节点被终止 → ⊘；runs.finish aborted 计数源之一）
   let settle!: () => void;
   const done = new Promise<void>((r) => {
     settle = r;
@@ -89,8 +110,20 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
     await deps.appendLog(level, msg, laneLabel === undefined ? {} : { laneLabel });
   }
 
-  function logDeadEdges(dead: readonly FlowEdge[], lane: Lane): void {
-    for (const e of dead) void log('info', `[${lane.label}] 分支跳过：${nodeName(e.to[0])}`, lane.label);
+  /** 级联 ⊘ 落地（DeadEdgeCascader/ConvergenceSweeper 回调）：statuses＋事件＋warn 日志 */
+  function cascadeSkip(nodeId: string): void {
+    setStatus(nodeId, 'skipped');
+    void log('warn', `分支不可达 — 跳过：${nodeName(nodeId)}`).catch(() => undefined);
+  }
+
+  const cascader = new DeadEdgeCascader({ doc, router, statusOf, skipNode: cascadeSkip });
+
+  /** 死边批量级联（交付路由 dead 边与静态预杀共用入口）＋即时死边 info 日志 */
+  function killDeadEdges(dead: readonly FlowEdge[], lane: Lane): void {
+    for (const e of dead) {
+      void log('info', `[${lane.label}] 分支跳过：${nodeName(e.to[0])}`, lane.label).catch(() => undefined);
+      cascader.killEdge(e);
+    }
   }
 
   /** 节点失败：error 态＋失败停派生（demo L1898-1901 强节点失败即终止语义；N6 策略接管随 T4-04） */
@@ -122,7 +155,7 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
         lane,
         nodeRunId,
         log: (level, msg) => {
-          void log(level, msg, lane.label);
+          void log(level, msg, lane.label).catch(() => undefined);
         },
         emit: (branch, payload) => {
           emitCount++;
@@ -132,10 +165,15 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
             return;
           }
           for (const t of p.targets) void spawnNode(t.nodeId, t.lane, t.input);
-          logDeadEdges(p.dead, lane);
+          killDeadEdges(p.dead, lane);
         },
         setStatus: (st, error) => setStatus(nodeId, st, lane, error),
         isAborted: () => flags.aborted,
+        holdAtBreakpoint: () => openHitGate(nodeId),
+        failRun: (reason) => {
+          flags.failed = true; // 环境级失败终止（X-3：不走 failBranch——路由豁免归 T4-04 PolicyRunner）
+          void log('err', `[${lane.label}] ${reason}`, lane.label).catch(() => undefined);
+        },
       };
       try {
         const out = await dispatcher.dispatch(node, input, ctx);
@@ -144,7 +182,8 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
         const writeDone = async (): Promise<void> => {
           setStatus(nodeId, 'done', lane);
           await storage.invoke('runs.nodeRunFinish', { nodeRunId, status: 'done', endedAt: now(), output: out });
-          await log('ok', `[${lane.label}] ${defName(nodeId)} 完成 · ${((now() - t0) / 1000).toFixed(1)}s`, lane.label);
+          // 已落 done 后完成日志失败不翻终态（移交项 #4：不再二次 nodeRunFinish(error)）
+          await log('ok', `[${lane.label}] ${defName(nodeId)} 完成 · ${((now() - t0) / 1000).toFixed(1)}s`, lane.label).catch(() => undefined);
         };
         // NodeOut 路由（02 §14）——branch 未命中 N2 outs=节点 error（先校验再落终态，防拼写错路由）
         if ('data' in out && emitCount > 0) {
@@ -157,12 +196,13 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
           } else {
             await writeDone();
             for (const t of r.targets) void spawnNode(t.nodeId, t.lane, t.input);
-            logDeadEdges(r.dead, lane);
+            killDeadEdges(r.dead, lane);
           }
         }
       } catch (e) {
-        if (e instanceof ExecAbortedError) {
-          // 被终止：⊘ 收敛、不交付下游（demo L1910）
+        if (e instanceof ExecAbortedError || flags.aborted) {
+          // 被终止（killScript 强杀/delay 步进/断点放行）：⊘ 收敛、不交付下游（demo L1910）
+          abortSkips++;
           setStatus(nodeId, 'skipped', lane);
           await storage.invoke('runs.nodeRunFinish', { nodeRunId, status: 'skipped', endedAt: now(), output: null }).catch(() => undefined);
           return;
@@ -181,9 +221,60 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
     }
   }
 
+  // ——— 断点门闩（human.* 挂起位；T4-03 仅终止放行，resume 归 T4-04 HitCoordinator） ———
+  interface HitGate {
+    release(payload: unknown): void;
+    abort(err: Error): void;
+  }
+  const hitGates = new Map<string, HitGate>();
+  function openHitGate(nodeId: string): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      hitGates.set(nodeId, {
+        release: (payload) => {
+          hitGates.delete(nodeId);
+          resolve(payload);
+        },
+        abort: (err) => {
+          hitGates.delete(nodeId);
+          reject(err);
+        },
+      });
+    });
+  }
+  /** 终止时自动放行全部 waiting 断点（finish(null) 语义，demo L1991 终止分支）→ ⊘ 收敛 */
+  function releaseWaitingHits(): number {
+    const gates = [...hitGates.values()];
+    for (const g of gates) g.abort(new ExecAbortedError());
+    return gates.length;
+  }
+
+  // ——— 收敛（drain 后一次；02 §10 #7） ———
+  let convergeOutcome: RunConvergeOutcome | undefined;
+  function converge(): RunConvergeOutcome {
+    if (convergeOutcome !== undefined) return convergeOutcome;
+    const sweeper = new ConvergenceSweeper({
+      nodeIds: doc.nodes.map((n) => n.id),
+      statusOf,
+      skipNode: (id) => {
+        const prev = statusOf(id);
+        setStatus(id, 'skipped');
+        if (flags.aborted && (prev === 'running' || prev === 'waiting')) abortSkips++; // 终止波及在途节点
+      },
+      isAborted: () => flags.aborted,
+      isFailed: () => flags.failed,
+    });
+    const out = sweeper.sweep();
+    convergeOutcome = {
+      ...out,
+      abortedCount: abortSkips,
+      failedCount: Object.values(statuses).filter((s) => s === 'error').length,
+    };
+    return convergeOutcome;
+  }
+
   function start(): void {
-    // 静态不可达 ⊘ 的出边预杀（demo L1937）——下游 need-1（归零级联归 T4-03）
-    for (const id of plan.skips) router.killEdgesOf(id);
+    // 静态不可达 ⊘ 的出边预杀＋归零级联（demo L1937；级联 ⊘ warn 日志经 cascader 回调）
+    for (const id of plan.skips) cascader.killEdgesOf(id);
     // 触发支派生：单触发=main/流程名；多触发=t:<id>/节点名（demo L1940）
     const triggers = findTriggers(doc, registry);
     for (const t of triggers) {
@@ -192,5 +283,17 @@ export function createRunLoop(deps: RunLoopDeps): RunLoop {
     }
   }
 
-  return { lanes, done, start };
+  return {
+    lanes,
+    done,
+    start,
+    abort: {
+      markAborted: () => {
+        flags.aborted = true;
+      },
+      activeScriptRuns: () => [...activeScripts],
+      releaseWaitingHits,
+    },
+    converge,
+  };
 }

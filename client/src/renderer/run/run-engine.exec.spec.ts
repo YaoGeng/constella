@@ -1,15 +1,19 @@
-// ExecDispatcher 组件套件（T4-02；TDD-C-03 §3 ExecDispatcher 行；02 §10 #10＋§8.5＋§14）。
+// ExecDispatcher 组件套件（T4-02＋T4-03；TDD-C-03 §3 ExecDispatcher 行；02 §10 #6/#10＋§8.5＋§14）。
 // 断言面：
 //   custom → run:spawnScript 请求形（lang python→py、scriptPath/entry/params/input、
 //   timeoutMs/retries 缺省 30000/0＋显式 0 值透传〔X-4〕、laneKey）；
 //   stdout JSON 行协议（S-5 冻结/K-01 bootstrap）：log 帧→[lane] 前缀日志、result 帧→NodeOut、
-//   exit 0 → resolve；exit 非 0 → reject（error 帧消息）；exit 0 缺 result → reject；
+//   exit 0 → resolve；exit 非 0 → reject（error 帧消息＞stderr 尾行诊断＞退出码）；exit 0 缺
+//   result → reject；result 载荷非对象 → reject（NodeOut 形校验）；stderr 分片 → [lane] warn
+//   透传＋并入非零退出诊断（移交项 #1）；单 chunk 多 JSON 行（粘包）逐行重组（移交项 #5）；
 //   emit 帧提前出口：ctx.emit(branch,payload)；emit 出口未命中 N2 outs → reject；
 //   N5 inner 内联展开＝单进程多步骤：spawnScript 恰一次＋`[lane] ▸ 步骤N` 前缀日志（02 §8.5）；
+//   活跃登记（onScriptActive）：spawn 前 true、settle 后 false（AbortCoordinator kill 数据源）；
 //   delay → 可中断计时（50ms 步进查 abort：中断抛 ExecAbortedError、完整返回 {data:input}）；
-//   human.* → 断点占位（setStatus(waiting)＋直通，T4-04 实装位）；
-//   cdp.* → LaneManager.ensureSession（首建 createSession）＋命令经注入 CommandTransport
-//   （帧形=T0-07 冻结；错误帧→reject；未注入→extract/click 抛错）；
+//   logic.branch → BranchFilter 真实求值（T-1 对称语义两侧＋求值异常 reject）；
+//   human.* → 断点门闩（setStatus(waiting)＋挂起；终止放行=reject ExecAbortedError；T4-04 实装位）；
+//   cdp.* → env:cdpProbe 前置探活（失败→reject＋ctx.failRun〔X-3〕；ok→ensureSession）＋
+//   命令经注入 CommandTransport（帧形=T0-07 冻结；错误帧→reject；未注入→extract/click 抛错）；
 //   无专属执行体的平台内置类型 → {data: input} 占位直通（不 spawn）。
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { BridgeRequest, BridgeResponse, FlowNode, LogLevel, ScriptEvent, SpawnScriptReq } from '@constella/shared/ipc';
@@ -53,6 +57,10 @@ function fakeTransport() {
   const pushChunk = (nodeRunId: string, chunk: string): void => {
     for (const fn of scriptSubs) fn({ nodeRunId, kind: 'stdout', chunk });
   };
+  /** stderr 分片直推（非零退出诊断路径） */
+  const pushStderr = (nodeRunId: string, chunk: string): void => {
+    for (const fn of scriptSubs) fn({ nodeRunId, kind: 'stderr', chunk });
+  };
   const transport: RunTransport = {
     onCronFired: () => () => undefined,
     onScriptEvent: (fn) => (scriptSubs.add(fn), () => scriptSubs.delete(fn)),
@@ -65,6 +73,9 @@ function fakeTransport() {
     },
     cdpCreateSession: async () => ({ port: ++portSeq, partition: 'persist:f1·main' }),
     cdpNavigate: async () => ({ ok: true }),
+    killScript: async () => ({ ok: true }),
+    cdpDestroyRun: async () => ({ ok: true }),
+    envCdpProbe: async () => ({ ok: true }),
   };
   const exit0 = (nodeRunId: string): void => {
     for (const fn of scriptSubs) fn({ nodeRunId, kind: 'exit', code: 0, ms: 12 });
@@ -72,7 +83,7 @@ function fakeTransport() {
   const exitFail = (nodeRunId: string, code = 1): void => {
     for (const fn of scriptSubs) fn({ nodeRunId, kind: 'exit', code, ms: 12 });
   };
-  return { transport, spawns, behaviors, pushRaw, pushChunk, exit0, exitFail };
+  return { transport, spawns, behaviors, pushRaw, pushChunk, pushStderr, exit0, exitFail };
 }
 
 /** fake CommandTransport（T0-07 帧形消费面）：记录请求、可编程响应 */
@@ -87,11 +98,16 @@ function fakeCommandTransport(respond?: (req: Omit<BridgeRequest, 'id'>) => Brid
   return { commandTransport, frames };
 }
 
-/** 执行上下文记录器（dispatcher 的驱动面） */
+/** 执行上下文记录器（dispatcher 的驱动面；hitGate/failRun 可编程） */
 function recorderCtx(over: Partial<ExecContext> = {}) {
   const logs: { level: LogLevel; msg: string }[] = [];
   const emits: { branch: string; payload: unknown }[] = [];
   const statuses: { status: NodeStatus; error?: string }[] = [];
+  const failures: string[] = [];
+  let release: () => void = () => undefined;
+  const hitGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const ctx: ExecContext = {
     lane: { key: 'main', label: '主支' },
     nodeRunId: 'r1:x',
@@ -99,14 +115,16 @@ function recorderCtx(over: Partial<ExecContext> = {}) {
     emit: (branch, payload) => emits.push({ branch, payload }),
     setStatus: (status, error) => statuses.push({ status, error }),
     isAborted: () => false,
+    holdAtBreakpoint: () => hitGate,
+    failRun: (reason) => failures.push(reason),
     ...over,
   };
-  return { ctx, logs, emits, statuses };
+  return { ctx, logs, emits, statuses, failures, releaseHit: () => release() };
 }
 
 function makeDispatcher(
   defs: readonly NodeDefinition[],
-  over: { transport?: RunTransport; commandTransport?: CommandTransport } = {},
+  over: { transport?: RunTransport; commandTransport?: CommandTransport; onScriptActive?: (nodeRunId: string, active: boolean) => void } = {},
 ): ExecDispatcher {
   const registry: RunRegistryLike = { get: (type) => defs.find((d) => d.type === type), isBroken: () => false };
   const lanes = new LaneManager({ runId: 'r1', ...(over.transport ? { transport: over.transport } : {}) });
@@ -116,6 +134,7 @@ function makeDispatcher(
     runId: 'r1',
     ...(over.transport ? { transport: over.transport } : {}),
     ...(over.commandTransport ? { commandTransport: over.commandTransport } : {}),
+    ...(over.onScriptActive ? { onScriptActive: over.onScriptActive } : {}),
   });
 }
 
@@ -231,6 +250,70 @@ describe('ExecDispatcher custom 脚本分派', () => {
     await expect(p).rejects.toThrow('result');
   });
 
+  it('result 载荷非对象（字符串/数组/null）→ reject 且文案指明 NodeOut 形（移交项 #2）', async () => {
+    for (const bad of ['oops', ['a'], null]) {
+      const fx = fakeTransport();
+      const dispatcher = makeDispatcher([def('custom.x')], { transport: fx.transport });
+      const p = dispatcher.dispatch(node('x', 'custom.x'), null, recorderCtx().ctx);
+      fx.pushRaw(NR, { type: 'result', out: bad });
+      fx.exit0(NR);
+      await expect(p).rejects.toThrow('NodeOut');
+    }
+  });
+
+  it('stderr 分片 → [lane] warn 透传＋非零退出时并入诊断（移交项 #1：诊断不丢失）', async () => {
+    const fx = fakeTransport();
+    const dispatcher = makeDispatcher([def('custom.x')], { transport: fx.transport });
+    const rec = recorderCtx();
+    const p = dispatcher.dispatch(node('x', 'custom.x'), null, rec.ctx);
+    fx.pushStderr(NR, 'Traceback (most recent call last):\n');
+    fx.pushStderr(NR, '  File "x.py", line 3\n');
+    fx.pushStderr(NR, 'ValueError: bad input\n');
+    fx.exitFail(NR, 1);
+    await expect(p).rejects.toThrow('ValueError: bad input（退出码 1）'); // 尾行并入错误消息
+    expect(rec.logs).toContainEqual({ level: 'warn', msg: '[主支] Traceback (most recent call last):' }); // [lane] 透传
+    expect(rec.logs.some((l) => l.level === 'warn' && l.msg.includes('ValueError'))).toBe(true);
+  });
+
+  it('error 帧消息优先于 stderr 诊断（error 帧=S-5 结构化失败帧）', async () => {
+    const fx = fakeTransport();
+    const dispatcher = makeDispatcher([def('custom.x')], { transport: fx.transport });
+    const p = dispatcher.dispatch(node('x', 'custom.x'), null, recorderCtx().ctx);
+    fx.pushStderr(NR, 'some stderr noise\n');
+    fx.pushRaw(NR, { type: 'error', message: '网络超时' });
+    fx.exitFail(NR, 1);
+    await expect(p).rejects.toThrow('网络超时');
+  });
+
+  it('单 chunk 多 JSON 行（粘包）：逐行重组不丢帧（移交项 #5）', async () => {
+    const fx = fakeTransport();
+    const dispatcher = makeDispatcher([def('custom.x')], { transport: fx.transport });
+    const rec = recorderCtx();
+    const p = dispatcher.dispatch(node('x', 'custom.x'), null, rec.ctx);
+    const l1 = `${JSON.stringify({ type: 'log', msg: '第一行' })}\n`;
+    const l2 = `${JSON.stringify({ type: 'log', msg: '第二行' })}\n`;
+    fx.pushChunk(NR, l1 + l2); // 两行同一分片
+    fx.pushRaw(NR, { type: 'result', out: { data: 'ok' } });
+    fx.exit0(NR);
+    await expect(p).resolves.toEqual({ data: 'ok' });
+    expect(rec.logs).toContainEqual({ level: 'info', msg: '[主支] 第一行' });
+    expect(rec.logs).toContainEqual({ level: 'info', msg: '[主支] 第二行' });
+  });
+
+  it('onScriptActive 活跃登记：spawn 前 true、settle 后 false（AbortCoordinator kill 数据源）', async () => {
+    const fx = fakeTransport();
+    const active: [string, boolean][] = [];
+    const dispatcher = makeDispatcher([def('custom.x')], {
+      transport: fx.transport,
+      onScriptActive: (id, a) => active.push([id, a]),
+    });
+    const p = dispatcher.dispatch(node('x', 'custom.x'), null, recorderCtx().ctx);
+    fx.pushRaw(NR, { type: 'result', out: { data: null } });
+    fx.exit0(NR);
+    await p;
+    expect(active).toEqual([[NR, true], [NR, false]]);
+  });
+
   it('spawnScript 返回 ok=false → reject', async () => {
     const fx = fakeTransport();
     const subs = new Set<(e: ScriptEvent) => void>();
@@ -340,14 +423,35 @@ describe('ExecDispatcher delay/human/内置直通', () => {
     await assertion;
   });
 
-  it('human.*：占位——setStatus(waiting)＋{data: input} 直通（断点协调实装随 T4-04）', async () => {
+  it('human.*：断点门闩——setStatus(waiting)＋挂起；放行后 {data: input} 直通（resume 交互随 T4-04）', async () => {
     const fx = fakeTransport();
     const dispatcher = makeDispatcher([def('human.review')], { transport: fx.transport });
     const rec = recorderCtx();
-    await expect(dispatcher.dispatch(node('h', 'human.review', { question: '请确认' }), 'UP', rec.ctx)).resolves.toEqual({ data: 'UP' });
+    const p = dispatcher.dispatch(node('h', 'human.review', { question: '请确认' }), 'UP', rec.ctx);
+    await Promise.resolve(); // microtask：确认挂起（不因直通提前 resolve）
     expect(rec.statuses).toContainEqual({ status: 'waiting' });
     expect(rec.logs.some((l) => l.msg.includes('等待人工确认'))).toBe(true);
+    let settled = false;
+    void p.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false); // 门闩关闭：挂起中
+    rec.releaseHit(); // 放行（T4-03 仅终止路径；T4-04 扩展 resume 载荷）
+    await expect(p).resolves.toEqual({ data: 'UP' });
     expect(fx.spawns).toHaveLength(0);
+  });
+
+  it('human.*：门闩 reject（终止放行）→ ExecAbortedError 传播（⊘ 收敛路径）', async () => {
+    const dispatcher = makeDispatcher([def('human.review')]);
+    let rejectGate: (e: Error) => void = () => undefined;
+    const gate = new Promise<void>((_, reject) => {
+      rejectGate = reject;
+    });
+    const rec = recorderCtx({ holdAtBreakpoint: () => gate });
+    const p = dispatcher.dispatch(node('h', 'human.review'), null, rec.ctx);
+    rejectGate(new ExecAbortedError());
+    await expect(p).rejects.toBeInstanceOf(ExecAbortedError);
   });
 
   it('无专属执行体的平台内置类型 → {data: input} 占位直通（不 spawn）', async () => {
@@ -417,6 +521,53 @@ describe('ExecDispatcher cdp.* 分派', () => {
     await expect(dispatcher.dispatch(node('o', 'cdp.open', { url: 'https://a.example.com' }), null, recorderCtx().ctx)).resolves.toBeTruthy();
     await expect(dispatcher.dispatch(node('e', 'cdp.extract', { selector: '.x' }), null, recorderCtx().ctx)).rejects.toThrow(
       '命令传输未注入',
+    );
+  });
+
+  it('env:cdpProbe 失败 → reject（CDP 环境未连接）＋ctx.failRun 失败终止（X-3：不走 failBranch）', async () => {
+    const fx = fakeTransport();
+    const probeTransport: RunTransport = {
+      ...fx.transport,
+      envCdpProbe: async () => ({ ok: false, detail: '会话进程未连接' }),
+    };
+    const dispatcher = makeDispatcher([def('cdp.open')], { transport: probeTransport });
+    const rec = recorderCtx();
+    await expect(dispatcher.dispatch(node('o', 'cdp.open', { url: 'https://a.example.com' }), null, rec.ctx)).rejects.toThrow(
+      'CDP 环境未连接',
+    );
+    expect(rec.failures).toEqual([expect.stringContaining('CDP 环境未连接')]);
+  });
+});
+
+// ————————————————————————————————————————————
+// logic.branch：BranchFilter 真实求值（T-1 对称语义，02 §10 #6）
+// ————————————————————————————————————————————
+
+describe('ExecDispatcher logic.branch 分派', () => {
+  const BRANCH = def('logic.branch', {
+    ports: { ins: ['in'], outs: [{ id: 'true', label: '是' }, { id: 'false', label: '否' }] },
+  });
+
+  it('expr 求值 truthy → {branch:"true"}＋条件成立日志', async () => {
+    const dispatcher = makeDispatcher([BRANCH]);
+    const rec = recorderCtx();
+    await expect(dispatcher.dispatch(node('b', 'logic.branch', { expr: 'price < 199' }), { price: 129 }, rec.ctx)).resolves.toEqual({
+      branch: 'true',
+    });
+    expect(rec.logs.some((l) => l.msg.includes('条件成立 → 走 true 分支'))).toBe(true);
+  });
+
+  it('expr 求值 falsy → {branch:"false"}（对称）', async () => {
+    const dispatcher = makeDispatcher([BRANCH]);
+    await expect(dispatcher.dispatch(node('b', 'logic.branch', { expr: 'price < 199' }), { price: 500 }, recorderCtx().ctx)).resolves.toEqual({
+      branch: 'false',
+    });
+  });
+
+  it('expr 非法 → reject（节点 error 路径，非 branch-miss）', async () => {
+    const dispatcher = makeDispatcher([BRANCH]);
+    await expect(dispatcher.dispatch(node('b', 'logic.branch', { expr: 'price <' }), { price: 1 }, recorderCtx().ctx)).rejects.toThrow(
+      'expr 求值失败',
     );
   });
 });
