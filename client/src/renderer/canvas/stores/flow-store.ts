@@ -72,6 +72,10 @@ export interface FlowState {
   onEdgesChange(changes: EdgeChange[]): void;
   setNodes(nodes: Node[]): void;
   setEdges(edges: Edge[]): void;
+  /** 组合变更（单历史项）：删节点＋相邻边 / 批量落节点 / 节点 params·policy 差异补丁。 */
+  removeNodeCascade(nodeId: string): void;
+  addNodes(newNodes: Node[]): void;
+  patchNode(nodeId: string, patch: { params?: Record<string, unknown>; policy?: Record<string, unknown> }): void;
   // —— 流程生命周期 ——
   /** 切流程/装载（历史按 flowId 归属：换归属+清栈+基线重置，undo 无操作）。 */
   loadFlow(flowId: string | null, doc: FlowDoc): void;
@@ -156,6 +160,41 @@ export const useFlowStore = create<FlowState>()(
       setEdges: (edges) => {
         const { nodes, baseline } = get();
         set({ edges, dirty: snapshotOf(nodes, edges) !== baseline });
+      },
+      // —— 组合变更（单历史项：多字段一次 set，zundo 恰压一条——demo pushHistory 同语义）——
+      /** 删节点＋相邻边（A-3.5 Delete 键/drawer 删除动作共用）。 */
+      removeNodeCascade(nodeId) {
+        const { nodes, edges, baseline } = get();
+        const nextNodes = nodes.filter((n) => n.id !== nodeId);
+        const nextEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
+        set({
+          nodes: nextNodes,
+          edges: nextEdges,
+          dirty: snapshotOf(nextNodes, nextEdges) !== baseline,
+        });
+      },
+      /** 批量落节点（CanvasSink.dropNodes 消费——单历史项整批一次可撤销，M4 会签 #1）。 */
+      addNodes(newNodes) {
+        const { nodes, edges, baseline } = get();
+        const next = [...nodes, ...newNodes];
+        set({ nodes: next, dirty: snapshotOf(next, edges) !== baseline });
+      },
+      /** 差异卡「应用」改选中节点 params/policy（CanvasSink.patchNode 消费）。 */
+      patchNode(nodeId, patch) {
+        const { nodes, edges, baseline } = get();
+        const next = nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  ...(patch.params ? { params: { ...((n.data as CanvasNodeData).params ?? {}), ...patch.params } } : {}),
+                  ...(patch.policy ? { policy: patch.policy } : {}),
+                },
+              }
+            : n,
+        );
+        set({ nodes: next, dirty: snapshotOf(next, edges) !== baseline });
       },
 
       loadFlow: (flowId, doc) => {

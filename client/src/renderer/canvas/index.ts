@@ -7,6 +7,22 @@ export { nodeTypes, edgeTypes, NodeCard, FlowEdge } from './node-types';
 export type { CanvasNodeData } from './node-types';
 export { useCanvasStore } from './canvas-store';
 export type { CanvasStore, DrawerState } from './canvas-store';
+// ViewportController / EditorKeyboard（T3-06）
+export { useViewportController, FIT_VIEW_PADDING } from './viewport/ViewportController';
+export type { ViewportController } from './viewport/ViewportController';
+export { EditorKeyboard } from './viewport/EditorKeyboard';
+export type { EditorKeyboardProps } from './viewport/EditorKeyboard';
+// DrawerShell / CanvasSink / FlowSwitcher（T3-08；M4 会签 #1 导出面）
+export { DrawerShell } from './drawer/DrawerShell';
+export type { DrawerShellProps } from './drawer/DrawerShell';
+export { createCanvasSink, createFlowSwitcher } from './sink/canvas-sink';
+export type {
+  CanvasSink,
+  CanvasSinkDeps,
+  FlowSwitcher,
+  NodeDropSpec,
+  PositionedNodeSpec,
+} from './sink/canvas-sink';
 // flowStore（T3-05；C-01 §1 store 面）
 export {
   DEFAULT_IN_PORT,

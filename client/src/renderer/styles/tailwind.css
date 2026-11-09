@@ -113,6 +113,20 @@ body {
   box-shadow: 0 0 10px rgba(240, 179, 94, 0.25);
 }
 
+@keyframes cn-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  50% {
+    box-shadow: 0 0 22px 4px var(--accent-line);
+  }
+}
+
+.cn-node--flash {
+  animation: cn-flash 0.9s ease;
+}
+
 .cn-node__head {
   display: flex;
   align-items: center;
@@ -280,6 +294,148 @@ body {
   font-family: var(--sans);
   backdrop-filter: blur(10px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* ————————————————————————————————————————————
+   DrawerShell（T3-08；demo 抽屉玻璃同风格）
+   ———————————————————————————————————————————— */
+.cn-drawer {
+  position: absolute;
+  top: 0;
+  right: -380px;
+  width: 360px;
+  height: 100%;
+  z-index: 12;
+  transition: right 0.18s ease;
+  background: var(--glass);
+  backdrop-filter: blur(16px);
+  border-left: 1px solid var(--line-2);
+}
+
+.cn-drawer--open {
+  right: 0;
+}
+
+.cn-drawer__inner {
+  height: 100%;
+  padding: 18px 16px;
+  overflow-y: auto;
+  color: var(--tx);
+  font-family: var(--sans);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cn-drawer__x {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: transparent;
+  color: var(--tx-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cn-drawer__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cn-drawer__meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--tx-3);
+}
+
+.cn-drawer__group-title {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--tx-3);
+  margin: 10px 0 6px;
+  letter-spacing: 0.4px;
+}
+
+.cn-drawer__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.cn-drawer__type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(160, 200, 255, 0.03);
+  color: var(--tx-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.cn-drawer__type:hover {
+  border-color: var(--accent-line);
+  color: var(--tx);
+}
+
+.cn-drawer__type-icon {
+  font-size: 16px;
+}
+
+.cn-drawer__type-spark {
+  font-size: 9px;
+}
+
+.cn-drawer__content {
+  flex: 1;
+}
+
+.cn-drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.cn-drawer__readonly {
+  padding: 14px;
+  border-radius: 9px;
+  border: 1px dashed var(--line-2);
+  color: var(--tx-3);
+  font-size: 12px;
+}
+
+.cn-btn {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--tx-2);
+  font-size: 12px;
+  font-family: var(--sans);
+  cursor: pointer;
+}
+
+.cn-btn:hover {
+  border-color: var(--accent-line);
+  color: var(--tx);
+}
+
+.cn-btn--primary {
+  background: var(--accent-tint);
+  border-color: var(--accent-line);
+  color: var(--accent-hi);
+}
+
+.cn-btn--danger {
+  border-color: var(--red-line);
+  color: var(--red);
 }
 
 /* 画布宿主基线（demo L190-198 canvas CSS 的 xyflow 语义等价起点） */

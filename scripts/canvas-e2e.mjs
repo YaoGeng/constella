@@ -156,6 +156,119 @@ async function main() {
       const edgeCount = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().edges.length);
       report('b4 三违例零建边', edgeCount === 1, `edges=${edgeCount}`);
     }
+
+    // ————— 场景 d/e：Delete 与快捷键（§6.2d/e；T3-06） —————
+    {
+      // d: 点击 B 选中 → Delete 删节点＋相邻边
+      await page.evaluate(() => window.__CONSTELLA_E2E__.canvas().setSelection('b'));
+      const before = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+      await page.keyboard.press('Delete');
+      await page.waitForTimeout(150);
+      const after = await page.evaluate(() => ({
+        nodes: window.__CONSTELLA_E2E__.flow().nodes.length,
+        edges: window.__CONSTELLA_E2E__.flow().edges.length,
+      }));
+      report('d1 Delete 删选中节点', after.nodes === before - 1, JSON.stringify(after));
+      report('d2 相邻边同删', after.edges === 0, `edges=${after.edges}`);
+
+      // e1: Ctrl+Z 回退删除 → Ctrl+Y 重做
+      await page.keyboard.press('Control+z');
+      await page.waitForTimeout(150);
+      const undone = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+      report('e1 Ctrl+Z 撤销删除', undone === before, `nodes=${undone}`);
+      await page.keyboard.press('Control+y');
+      await page.waitForTimeout(150);
+      const redone = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+      report('e2 Ctrl+Y 重做', redone === before - 1, `nodes=${redone}`);
+
+      // e3: 焦点守卫——input 聚焦时 Ctrl+Z 不触发 undo
+      await page.keyboard.press('Control+z'); // 先回退到 3 节点
+      await page.waitForTimeout(150);
+      const base = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+      await page.evaluate(() => {
+        const input = document.createElement('input');
+        input.id = 'e2e-guard-input';
+        document.body.appendChild(input);
+        input.focus();
+      });
+      await page.keyboard.press('Control+z'); // input 聚焦 → 应无操作
+      await page.waitForTimeout(150);
+      const guarded = await page.evaluate(() => {
+        document.getElementById('e2e-guard-input')?.remove();
+        return window.__CONSTELLA_E2E__.flow().nodes.length;
+      });
+      report('e3 焦点守卫（input 聚焦 Ctrl+Z 不撤销）', guarded === base, `nodes=${guarded}`);
+    }
+
+    // ————— 场景 c：双击开抽屉（§6.2c；T3-08） —————
+    {
+      // c1: 双击节点 → edit 抽屉
+      const nb = await nodeBox('.cn-node[data-node-type="llm.chat"]');
+      await page.mouse.dblclick(nb.x + nb.width / 2, nb.y + nb.height / 2);
+      await page.waitForTimeout(250);
+      const editMode = await page.evaluate(() => {
+        const d = document.querySelector('.cn-drawer');
+        return { open: d?.classList.contains('cn-drawer--open') ?? false, mode: d?.getAttribute('data-drawer-mode') ?? '' };
+      });
+      report('c1 双击节点开 edit 抽屉', editMode.open && editMode.mode === 'edit', JSON.stringify(editMode));
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(250);
+
+      // c2: 双击空白 → create 抽屉（类型网格可见）
+      await page.mouse.dblclick(60, 600);
+      await page.waitForTimeout(250);
+      const createMode = await page.evaluate(() => {
+        const d = document.querySelector('.cn-drawer');
+        const grid = document.querySelectorAll('.cn-drawer__type').length;
+        return { open: d?.classList.contains('cn-drawer--open') ?? false, mode: d?.getAttribute('data-drawer-mode') ?? '', grid };
+      });
+      report('c2 双击空白开 create 抽屉＋类型网格', createMode.open && createMode.mode === 'create' && createMode.grid > 0, JSON.stringify(createMode));
+
+      // c3: 网格点类型 → 节点落图（缺省 onCreate=drawer 落点）
+      const nodesBefore = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+      await page.locator('.cn-drawer__type[data-node-type="llm.chat"]').first().click();
+      await page.waitForTimeout(250);
+      const nodesAfter = await page.evaluate(() => window.__CONSTELLA_E2E__.flow().nodes.length);
+      report('c3 类型网格点选落图', nodesAfter === nodesBefore + 1, `${nodesBefore}→${nodesAfter}`);
+    }
+
+    // ————— §6.6 undo/redo 产品壳集成回归（T3-08 收尾；S-1 判据 2 同口径） —————
+    {
+      const result = await page.evaluate(async () => {
+        const w = window.__CONSTELLA_E2E__;
+        // 重置到干净基线
+        w.loadFlow('undo-bench', { name: 'undo', nodes: [], edges: [] });
+        const flow = w.flow;
+        const snap = () => JSON.stringify(flow().nodes.map((n) => [n.id, n.position.x, n.position.y]));
+        const S = [snap()]; // S[0]=初始
+        // 100 离散操作：每次落一个节点（addNodes 单历史项）
+        for (let i = 0; i < 100; i++) {
+          flow().addNodes([
+            { id: `u${i}`, type: 'constella-node', position: { x: (i % 20) * 40, y: Math.floor(i / 20) * 60 }, data: { nodeId: `u${i}`, type: 'llm.chat', params: {} } },
+          ]);
+          S.push(snap());
+        }
+        // undo ×100：第 k 次后应=S[100-k]；栈深 60 → 可回退至 S[40]，k>60 恒 S[40]（稳定 no-op）
+        let undoOk = 0;
+        const stackLimit = Math.min(60, 100); // 产品 HISTORY_LIMIT=60（C-01 §4）
+        for (let k = 1; k <= 100; k++) {
+          flow().undo();
+          const expectIdx = Math.max(100 - stackLimit, 100 - k);
+          if (snap() === S[expectIdx]) undoOk++;
+        }
+        // redo ×100：undo 终态=S[40]，第 k 次后应=S[40+k]（redo 栈上限=undo 实际步数）
+        let redoOk = 0;
+        for (let k = 1; k <= 100; k++) {
+          flow().redo();
+          const expectIdx = Math.min(100, 100 - stackLimit + k);
+          if (snap() === S[expectIdx]) redoOk++;
+        }
+        return { undoOk, redoOk, finalMatch: snap() === S[100], stackDepth: w.temporal().pastStates.length };
+      });
+      report('§6.6 undo 100/100 快照比对', result.undoOk === 100, `ok=${result.undoOk}`);
+      report('§6.6 redo 100/100 快照比对', result.redoOk === 100, `ok=${result.redoOk}`);
+      report('§6.6 终态=S100＋栈深≤60', result.finalMatch && result.stackDepth <= 60, JSON.stringify(result));
+    }
   } finally {
     await app.close();
   }
