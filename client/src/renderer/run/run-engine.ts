@@ -1,27 +1,32 @@
-// createRunEngine —— 运行调度装配面（TDD-C-03 §1 接口契约；T4-01 骨架）。
+// createRunEngine —— 运行调度装配面（TDD-C-03 §1 接口契约；T4-01 骨架＋T4-02 执行循环接线）。
 // 本卡落：startRun（RunGate 三查＋附加拦截前置 → runs.create → TopoPlanner 规划 →
-// 不可达预标 ⊘ → 启动日志）/ abortRun（骨架收尾：台账停跳＋runs.finish(aborted)＋warn 日志）
-// / onNodeStatus·onRunLog 事件面 / RunLedger 台账心跳 / cron:fired 复查三闸后 startRun。
-// 执行循环体（lane/扇出/汇合/级联/收敛/终止扩散原语）归 T4-02/T4-03，断点协调归 T4-04——
-// 骨架期 run 保持 running 直至 abortRun（§6.1c 并行心跳验收形态）。
-// IPC 零 Electron 依赖：storage=C-06 renderer 半段注入、cron=注入 Transport（§8 替换点①）。
+// 不可达预标 ⊘ → 启动日志 → RunLoop 启动〔lane/扇出/汇合/交付路由/ExecDispatcher〕）
+// / abortRun（置 aborted 标志〔delay 可中断/停派生〕＋骨架收尾：台账停跳＋runs.finish(aborted)
+// ＋warn 日志）/ onNodeStatus·onRunLog 事件面 / RunLedger 台账心跳 / cron:fired 复查三闸后
+// startRun。run 收尾状态映射（done/error＋收敛 ⊘ 兜底）＝T4-03 ConvergenceSweeper——本卡
+// drain 后 run 保持 active（whenSettled=收敛组件接线位）。终止强杀/断连分支归 T4-03，
+// N6 重试/断点协调归 T4-04。
+// IPC 零 Electron 依赖：storage=C-06 renderer 半段注入、cron/脚本/会话通道=注入 Transport（§8 替换点①）。
 import type { FlowDoc, LogLevel } from '@constella/shared/ipc';
 import type { StorageClient } from '../storage';
+import { createRunLoop, type RunFlags, type RunLoop } from './run-loop';
 import { RunGate } from './run-gate';
 import { RunLedger } from './run-ledger';
 import { TopoPlanner, type TopoPlan } from './topo-planner';
-import type { LogLine, NodeStatusEvent, NotifyFn, RunHandle, RunRegistryLike, RunTransport } from './types';
+import type { CommandTransport, LogLine, NodeStatusEvent, NotifyFn, RunHandle, RunRegistryLike, RunTransport } from './types';
 
 export interface RunEngineDeps {
   /** C-06 renderer 半段（flows.get＋runs/logs op 双写——§2 imports ↓） */
   storage: StorageClient;
-  /** C-05 注册表最小面（broken 拦截/触发判定） */
+  /** C-05 注册表最小面（broken 拦截/触发判定/执行体分派） */
   registry: RunRegistryLike;
   /** 脏闸注入位（true=该流程有未保存改动）；应用壳接 flowStore dirty 投影 */
   guardDirty: (flowId: string) => boolean;
-  /** 执行面传输（cron:fired 订阅；缺省=无 cron 源） */
+  /** 执行面传输（cron:fired 订阅＋spawnScript/scriptEvent＋cdp 会话通道；缺省=无 cron 源、脚本/cdp 分派抛错） */
   transport?: RunTransport;
-  /** toast 注入位（违例 toast；缺省仅日志） */
+  /** 命令传输注入位（cdp.* 内置命令帧——T0-07 冻结帧形；实装=ws client 随 T4-05） */
+  commandTransport?: CommandTransport;
+  /** toast 注入位（违例/节点失败 toast；缺省仅日志） */
   notify?: NotifyFn;
   /** 台账注入位（缺省内部构造 heartbeatMs 间隔） */
   ledger?: RunLedger;
@@ -33,13 +38,15 @@ export interface RunEngineDeps {
 export interface RunEngine {
   /** §1 契约签名；闸违例（三查＋附加拦截）→ null＋toast＋err 日志、不产生 run（demo L1792-1796 行为源） */
   startRun(flowId: string, opts?: { source?: 'manual' | 'cron' }): Promise<RunHandle | null>;
-  /** §1 契约签名；骨架收尾（终止扩散原语随 T4-03） */
+  /** §1 契约签名；置 aborted 标志（执行循环自觉退出）＋骨架收尾（终止扩散原语随 T4-03） */
   abortRun(runId: string): void;
-  /** §1 事件流（不可达预标 ⊘ 即刻派发；节点执行态随后续卡接入） */
+  /** §1 事件流（不可达预标 ⊘ 与节点执行态同管线派发，laneLabel 随 lane 语义填入） */
   onNodeStatus(fn: (e: NodeStatusEvent) => void): () => void;
   /** §1 日志事件面（事件源=logs.append 双写管线同点派发） */
   onRunLog(fn: (line: LogLine) => void): () => void;
-  /** 生命周期收口（契约外：停心跳/退订 cron/清监听——应用壳卸载与测试清理用） */
+  /** 契约外：执行循环 drain promise（测试与 T4-03 收敛组件接线用——run 收尾归后续卡） */
+  whenSettled(runId: string): Promise<void> | undefined;
+  /** 生命周期收口（契约外：停心跳/退订 cron/置终止/清监听——应用壳卸载与测试清理用） */
   dispose(): void;
 }
 
@@ -50,6 +57,8 @@ interface RunState {
   statuses: Record<string, string>;
   plan: TopoPlan;
   finished: boolean;
+  flags: RunFlags;
+  loop?: RunLoop;
 }
 
 /** 用时 mm:ss（demo L1753 fmt 同形） */
@@ -102,7 +111,9 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
     const { id: runId } = await storage.invoke('runs.create', { flowId, name: doc.name });
     ledger.open({ runId, flowId, name: doc.name, t0: now() });
     const statuses: Record<string, string> = {};
-    runs.set(runId, { flowId, name: doc.name, statuses, plan, finished: false });
+    const flags: RunFlags = { aborted: false, failed: false };
+    const state: RunState = { flowId, name: doc.name, statuses, plan, finished: false, flags };
+    runs.set(runId, state);
     // 不可达节点预标 ⊘（启动即 skipped——事件＋statuses；demo L1936 静态 ⊘ 同语义）
     for (const nodeId of plan.skips) {
       statuses[nodeId] = 'skipped';
@@ -110,6 +121,26 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
     }
     const skipNote = plan.skips.length > 0 ? `，${plan.skips.length} 个未连接节点跳过` : '';
     await appendLog('info', `▶ 任务「${doc.name}」启动 — ${plan.order.length} 个节点入队${skipNote}`, { flowId, runId });
+    // 执行循环（T4-02：lane/扇出/汇合/交付路由/ExecDispatcher——启动于启动日志之后，demo L1808-1809 序）
+    const loop = createRunLoop({
+      runId,
+      flowId,
+      flowName: doc.name,
+      doc,
+      plan,
+      statuses,
+      registry,
+      storage,
+      ...(notify !== undefined ? { notify } : {}),
+      ...(deps.transport !== undefined ? { transport: deps.transport } : {}),
+      ...(deps.commandTransport !== undefined ? { commandTransport: deps.commandTransport } : {}),
+      flags,
+      now,
+      appendLog: (level, msg, laneCtx = {}) => appendLog(level, msg, { flowId, runId, ...laneCtx }),
+      emitStatus,
+    });
+    state.loop = loop;
+    loop.start();
     return { runId, statuses };
   }
 
@@ -118,6 +149,7 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
     if (run === undefined || run.finished) return;
     const entry = ledger.activeOf(run.flowId);
     if (entry === undefined || entry.runId !== runId) return; // 已收尾 → no-op（幂等）
+    run.flags.aborted = true; // 执行循环自觉退出位（delay 步进/派生闸；demo L1785）
     run.finished = true;
     const t1 = now();
     ledger.close(runId, 'aborted');
@@ -155,10 +187,16 @@ export function createRunEngine(deps: RunEngineDeps): RunEngine {
       logSubs.add(fn);
       return () => logSubs.delete(fn);
     },
+    whenSettled(runId: string): Promise<void> | undefined {
+      return runs.get(runId)?.loop?.done;
+    },
     dispose() {
       cronUnsub?.();
       cronUnsub = null;
       if (ownLedger) ledger.dispose();
+      for (const run of runs.values()) {
+        if (!run.finished) run.flags.aborted = true; // 残留活动 run 置终止（delay/派生闸自觉退出）
+      }
       statusSubs.clear();
       logSubs.clear();
     },

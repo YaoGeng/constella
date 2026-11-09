@@ -1,4 +1,4 @@
-// run 半段导出面（TDD-C-03 §1/§3；T4-01 骨架：RunGate/TopoPlanner/RunLedger/RunEngine）。
+// run 半段导出面（TDD-C-03 §1/§3；T4-01 骨架＋T4-02 执行链四组件）。
 export { createRunEngine } from './run-engine';
 export type { RunEngine, RunEngineDeps } from './run-engine';
 export { RunGate } from './run-gate';
@@ -7,9 +7,19 @@ export { TopoPlanner, findTriggers } from './topo-planner';
 export type { TopoPlan } from './topo-planner';
 export { RunLedger } from './run-ledger';
 export type { LedgerEntry, LedgerStatus, OpenLedgerInput } from './run-ledger';
+export { LaneManager } from './lane-manager';
+export type { LaneManagerDeps, LaneSession } from './lane-manager';
+export { DeliveryRouter } from './delivery-router';
+export type { DeliveryPlan, DeliveryRouterDeps, DeliveryTarget } from './delivery-router';
+export { ExecDispatcher, ExecAbortedError } from './exec-dispatcher';
+export type { ExecContext, ExecDispatcherDeps } from './exec-dispatcher';
+export { createRunLoop } from './run-loop';
+export type { RunFlags, RunLoop, RunLoopDeps } from './run-loop';
 export type {
+  CommandTransport,
   GateReason,
   GateResult,
+  Lane,
   LogLine,
   NodeStatus,
   NodeStatusEvent,

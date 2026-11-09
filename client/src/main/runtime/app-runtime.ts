@@ -19,8 +19,8 @@ import type {
 } from './electron-api';
 import type { MainServiceSlots } from './service-slots';
 import { ViewerWindowManager } from './viewer-windows';
+import { IpcGateway } from '../ipc/ipc-gateway';
 import {
-  createIpcMainInvokeRegistry,
   parseConfirmCloseReply,
   registerAppRuntimeChannels,
   type InvokeRegistry,
@@ -50,13 +50,20 @@ export interface AppRuntimeDeps {
   preloadExamples?: () => void | Promise<void>;
   /** confirmClose renderer 无应答兜底超时 ms（缺省 2000） */
   confirmCloseTimeoutMs?: number;
-  /** r→m invoke 注册面（缺省=ipcMain.handle 半段；T4-14 IpcGateway.register 接管位） */
+  /** r→m invoke 注册面（缺省=AppRuntime.ipc〔IpcGateway，T4-14 接管〕；测试注入位保留） */
   invokeRegistry?: InvokeRegistry;
 }
 
 export class AppRuntime {
   /** 查看窗原语（openViewer/置顶/✕ 只关窗——T4-18 消费面） */
   readonly viewers: ViewerWindowManager;
+
+  /**
+   * IpcGateway 统一注册基座（T4-14 接管）：21 r→m invoke 注册＋payload 校验＋{code,message}
+   * 错误序列化＋3 m→r 推送 sender 面。五服务 handler 挂载面（T4-15~T4-20 经 register；
+   * zip:* 装配位预留——handler 骨架随 T4-20、管线注入随 C-08〔P5〕）。
+   */
+  readonly ipc: IpcGateway;
 
   private mainWindow: BrowserWindowLike | null = null;
   private startupDone = false;
@@ -66,6 +73,10 @@ export class AppRuntime {
 
   constructor(private readonly deps: AppRuntimeDeps) {
     this.viewers = new ViewerWindowManager(deps.electron.BrowserWindow);
+    this.ipc = new IpcGateway({
+      ipcMain: deps.electron.ipcMain,
+      webContents: () => this.mainWindow?.webContents,
+    });
   }
 
   /** 启动序（§3 生命周期段全序）：registerSchemes → whenReady → protocol.handle → storage.init → vault.init → cdp.init → 主窗加载 → cron.start → sweepOrphans */
@@ -88,7 +99,8 @@ export class AppRuntime {
     protocol.handle(APP_SCHEME, (request: Request): Promise<Response> => {
       return this.serveRendererAsset(request.url);
     });
-    // 3a) AppRuntime 域四组通道（ipcMain.handle 半段；T4-14 IpcGateway.register 接管位）
+    // 3a) AppRuntime 域四组通道（缺省经 IpcGateway=T4-14 接管：payload 校验＋错误序列化归一；
+    //     invokeRegistry 注入位保留——T4-13 冻结测试缝）
     registerAppRuntimeChannels(
       {
         app,
@@ -97,7 +109,7 @@ export class AppRuntime {
         ownerWindow: () => this.mainWindow ?? undefined,
         laneMemory: () => this.deps.services?.cdp?.laneMemory?.() ?? [],
       },
-      this.deps.invokeRegistry ?? createIpcMainInvokeRegistry(this.deps.electron.ipcMain),
+      this.deps.invokeRegistry ?? this.ipc,
     );
     // 4) StorageService.init（C-06 open 装配序；preloadExamples=迁移完成后、种子流程写入前的
     //    ExamplePreloader 挂载步——恒传回调（缺省空实现），永不 undefined）

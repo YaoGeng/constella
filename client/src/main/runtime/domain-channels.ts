@@ -7,8 +7,9 @@
 //   dialog:openFile/saveFile  r→m  用户取消 in-band {path:null}（非 reject）
 //   shell:openExternal  r→m  仅 http/https；非法→SHELL-INVALID-URL（协议白名单=C-M1 冻结安全增强）
 //
-// 注册面：InvokeRegistry（缺省=ipcMain.handle 半段）——T4-14 IpcGateway.register/serializeError
-// 接管位（payload Zod 校验〔源型=X-01〕与 21 通道全集注册归 T4-14；本卡 handler 只做轻量形状防御）。
+// 注册面：InvokeRegistry——T4-14 已由 IpcGateway 接管（client/src/main/ipc/ipc-gateway.ts：
+// 统一 ipcMain.handle 半段＋payload 校验〔源型=X-01〕＋错误序列化归一 serialize-error.ts；
+// AppRuntime.startup 缺省经 runtime.ipc 挂载，AppRuntimeDeps.invokeRegistry 保留注入位）。
 import os from 'node:os';
 import {
   IPC_CHANNELS,
@@ -22,9 +23,9 @@ import {
   type SaveFileRes,
   type SystemInfoRes,
 } from '@constella/shared/ipc';
-import type { AppLike, BrowserWindowLike, DialogLike, IpcMainLike, ShellLike } from './electron-api';
+import type { AppLike, BrowserWindowLike, DialogLike, ShellLike } from './electron-api';
 
-/** r→m invoke 注册面（缺省=ipcMain.handle 半段；T4-14 IpcGateway.register 接管位） */
+/** r→m invoke 注册面（缺省实现=IpcGateway——T4-14 接管；本接口为 T4-13 冻结注入位，保持不动） */
 export interface InvokeRegistry {
   handle(channel: IpcChannel, handler: (payload: unknown) => unknown | Promise<unknown>): void;
 }
@@ -42,7 +43,8 @@ export interface DomainChannelDeps {
   laneMemory: LaneMemorySource;
 }
 
-/** 域通道业务错误（code＋message；经注册面 reject——铁律：裸 Error/堆栈不穿 contextBridge） */
+/** 域通道业务错误（code＋message；经 IpcGateway 统一序列化为 {code,message} reject——铁律：
+ * 裸 Error/堆栈不穿 contextBridge；同构形 Error+string code 亦覆盖 StorageError〔T4-20 透传〕） */
 export class DomainChannelError extends Error {
   constructor(
     readonly code: IpcErrorCode,
@@ -51,30 +53,6 @@ export class DomainChannelError extends Error {
     super(message);
     this.name = 'DomainChannelError';
   }
-}
-
-/**
- * 错误序列化先驱（T4-14 IpcGateway.serializeError 接管位）：域错误→{code,message}；
- * 未知错误→INTERNAL（02 §6.1 通用码）。
- */
-export function serializeDomainError(err: unknown): { code: string; message: string } {
-  if (err instanceof DomainChannelError) return { code: err.code, message: err.message };
-  return { code: 'INTERNAL', message: err instanceof Error ? err.message : String(err) };
-}
-
-/** ipcMain.handle 半段缺省注册面（T4-14 IpcGateway.register 落位后整体替换） */
-export function createIpcMainInvokeRegistry(ipcMain: IpcMainLike): InvokeRegistry {
-  return {
-    handle(channel: IpcChannel, handler: (payload: unknown) => unknown | Promise<unknown>): void {
-      ipcMain.handle(channel, async (_event: unknown, payload?: unknown) => {
-        try {
-          return await handler(payload);
-        } catch (err) {
-          throw serializeDomainError(err);
-        }
-      });
-    },
-  };
 }
 
 // ————————————————————————————————————————————
