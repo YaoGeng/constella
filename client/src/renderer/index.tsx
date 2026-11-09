@@ -1,11 +1,86 @@
 // Constella renderer 入口（T0-08 最小壳 → T3-01 起挂载 CanvasModule）。
 // 经 app:// 特权协议加载（S-1 ③）；完整应用壳（header/任务中心/节点库）随 P5/P6 装配。
+import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { FlowDoc } from '@constella/shared/ipc';
+import type { NodeDefinition } from '@constella/shared/dsl';
 import './styles/tailwind.css';
 import { CanvasChrome } from './canvas';
+import { CanvasToastProvider } from './canvas/toast';
+import { CanvasEdgeAnimContext, CanvasRegistryContext, CanvasSnapContext } from './canvas/registry-context';
+import { useFlowStore } from './canvas/stores/flow-store';
+import { useCanvasStore } from './canvas/canvas-store';
+import { createNodeRegistry } from './node-registry';
+
+/** E2E 最小定义集（#e2e 模式装配——产品装载序 T1-10 经 storage 种子，e2e 环境无 storage）。 */
+function e2eDefinitions(): NodeDefinition[] {
+  const base = { paramsSchema: [], exec: null, version: '1.0.0', packageVersion: '1.0.0' };
+  return [
+    {
+      ...base,
+      type: 'llm.chat',
+      kind: 'builtin',
+      meta: { name: '对话', icon: '💬', category: 'AI' },
+      ports: { ins: ['in'], outs: [{ id: 'out', label: '输出' }] },
+    },
+    {
+      ...base,
+      type: 'trigger.manual',
+      kind: 'builtin',
+      meta: { name: '手动', icon: '⚡', category: '触发' },
+      ports: { ins: [], outs: [{ id: 'out', label: '输出' }] },
+    },
+  ];
+}
+
+/**
+ * 应用装配根（画布宿主半段）：
+ * - snap/edgeAnim 以注入默认值交付（区头 b 项——settingsStore 装配随 P6 C-11 替换此 useState）。
+ * - registry 装配：产品态经 T1-10 装载序（storage 种子）注入——当前最小壳未接线，Provider 缺省
+ *   null（NodeCard fallback 卡）；#e2e 模式装配最小定义集（三查/渲染需真 def）。
+ * - E2E 钩子：仅 #e2e hash 时暴露 window.__CONSTELLA_E2E__（产品会话零暴露面；
+ *   contextIsolation+sandbox 下 renderer window 无跨源可达性）。canvas-e2e.mjs 消费。
+ */
+function App() {
+  const [snap, setSnap] = useState(true);
+  const [edgeAnim, setEdgeAnim] = useState(true);
+  const isE2E = location.hash === '#e2e';
+  const registry = useMemo(() => {
+    if (!isE2E) return null;
+    const reg = createNodeRegistry();
+    for (const def of e2eDefinitions()) reg.register(def);
+    return reg;
+  }, [isE2E]);
+
+  useEffect(() => {
+    if (!isE2E) return;
+    (window as unknown as Record<string, unknown>).__CONSTELLA_E2E__ = {
+      flow: useFlowStore.getState,
+      canvas: useCanvasStore.getState,
+      temporal: useFlowStore.temporal.getState,
+      loadFlow: (flowId: string, doc: FlowDoc) => useFlowStore.getState().loadFlow(flowId, doc),
+      setSnap,
+      setEdgeAnim,
+    };
+    console.log('[constella-renderer] e2e hook armed (#e2e)');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <CanvasToastProvider>
+      <CanvasSnapContext.Provider value={snap}>
+        <CanvasEdgeAnimContext.Provider value={edgeAnim}>
+          <CanvasRegistryContext.Provider value={registry}>
+            <CanvasChrome />
+          </CanvasRegistryContext.Provider>
+        </CanvasEdgeAnimContext.Provider>
+      </CanvasSnapContext.Provider>
+    </CanvasToastProvider>
+  );
+}
 
 const rootEl = document.querySelector('#root');
 if (rootEl) {
-  createRoot(rootEl).render(<CanvasChrome />);
+  createRoot(rootEl).render(<App />);
   console.log('[constella-renderer] CanvasModule booted (T3-01, app:// protocol)');
 }
