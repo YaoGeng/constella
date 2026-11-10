@@ -1,6 +1,6 @@
-// main 侧 zip 管线域（T5-06 导出半段＋T5-07 导入半段 / TDD-C-08 §3 main：client/src/main/zip/）
-// ——jszip 唯一 import 面（§6.8 收窄：换库只动 zip-writer/zip-reader 两组件、四件套形与
-// CRC32 自校验器不变）。
+// main 侧 zip 管线域（T5-06 导出半段＋T5-07 导入半段＋T5-08 示例预装半段 / TDD-C-08 §3
+// main：client/src/main/zip/）——jszip 唯一 import 面（§6.8 收窄：换库只动 zip-writer/
+// zip-reader 两组件、四件套形与 CRC32 自校验器不变）。
 export { crc32 } from './crc32';
 export { createDosTimeConverter, type DosFields, type DosTimeConverter } from './dos-time';
 export {
@@ -34,3 +34,14 @@ export {
 } from './package-parser';
 export { createAssetInstaller, type AssetInstaller, type AssetInstallerDeps } from './asset-installer';
 export { createZipImportPipeline, type ZipImportPipelineDeps } from './import-pipeline';
+// ———— T5-08 示例预装半段（ExamplePreloader＋示例资产 9——首启装载，不经 zip:import 通道）————
+export {
+  EXAMPLE_ASSETS,
+  EXAMPLE_COUNT,
+  EXAMPLE_TYPES,
+  buildExamplePackages,
+  writeExampleZips,
+  type ExampleAsset,
+  type ExamplePackage,
+} from './example-assets';
+export { createExamplePreloader, type ExamplePreloader, type ExamplePreloaderDeps } from './example-preloader';

@@ -137,6 +137,8 @@ function createBoot(): Boot {
       bootstrap: path.join(REPO_ROOT, 'sdk', 'src', 'bootstrap.ts'),
     },
     pyPackageDir: path.join(REPO_ROOT, 'sdk', 'py'),
+    // T5-08 联跑：示例资产 9 预装走真装配链（client/assets/examples——CLIENT_ROOT 相对定位）
+    exampleAssetsDir: path.join(CLIENT_ROOT, 'assets', 'examples'),
     cronTickMs: 100, // 冒烟：tick 加速（分钟边界判定仍由表达式+假钟驱动）
     cronNow: () => clock.now,
     ...(poolFirst > 0 && poolLast > 0 ? { cdpPortRange: { first: poolFirst, last: poolLast } } : {}),

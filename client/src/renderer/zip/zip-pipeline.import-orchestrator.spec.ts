@@ -77,7 +77,9 @@ interface Harness {
   calls: {
     zipImport: ZipImportReq[];
     storageInvoke: StorageInvokeReq[];
-    dropNodes: Array<Array<{ type: string; x: number; y: number; params?: Record<string, unknown> }>>;
+    dropNodes: Array<
+      Array<{ type: string; x: number; y: number; params?: Record<string, unknown>; name?: string; noScript?: boolean }>
+    >;
     registered: NodeDefinition[];
     markDirty: number;
     notify: Array<[string, string]>;
@@ -363,5 +365,103 @@ describe('ImportOrchestrator——两段式编排', () => {
     });
     await h.orch.importArchive('C:\\pkg.zip', { confirm: async () => true });
     expect(seen).toEqual(['社媒']);
+  });
+
+  it('dropNodes 透传 name/noScript（T5-07 评审裁定 B 转交——序列化语义字段不丢，运行闸不击穿）', async () => {
+    const h = makeHarness({
+      inspect: {
+        nodes: [
+          { type: 'xhs.search', name: '搜索', position: { x: 0, y: 0 }, params: {}, definition: XHS_DEF, noScript: true },
+        ],
+        noScript: ['搜索'],
+        categories: [],
+        manifest: { kind: 'node', name: '缺脚本包', version: '1.0.0' },
+        token: 'a'.repeat(64),
+      },
+      commit: {
+        nodes: [{ id: 'n1', type: 'xhs.search', name: '搜索', position: { x: 0, y: 0 }, params: {}, noScript: true }],
+        noScript: ['搜索'],
+      },
+    });
+    await h.orch.importArchive('C:\\pkg.zip', { confirm: async () => true });
+    const spec = h.calls.dropNodes[0]![0]!;
+    expect(spec.name).toBe('搜索');
+    expect(spec.noScript).toBe(true);
+  });
+});
+
+// ————————————————————————————————————————————
+// bytes 链（✅ 02 v1.0e〔T5-10 前置授权 2〕：market download 字节直入——PM 裁决）
+// ————————————————————————————————————————————
+
+describe('ImportOrchestrator——bytes 链（02 v1.0e：download 字节直入导入链）', () => {
+  const BYTES = new Uint8Array([1, 2, 3, 4]);
+
+  it('importArchiveBytes 全链＝importArchive 同构（req 带 bytes 不带 path；confirm/commit/落图/入库同序）', async () => {
+    const confirm = vi.fn(async () => true);
+    const h = makeHarness();
+    const res = await h.orch.importArchiveBytes(BYTES, { confirm });
+    expect(h.calls.zipImport).toEqual([
+      { bytes: BYTES, phase: 'inspect' },
+      { bytes: BYTES, phase: 'commit', token: 'a'.repeat(64) },
+    ]);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(h.calls.dropNodes).toHaveLength(1); // 落图照走（node/pack 链）
+    expect(h.calls.storageInvoke).toHaveLength(1); // library.upsert 照走
+    expect(h.calls.registered).toEqual([XHS_DEF]);
+    expect(res).toEqual(commitRes());
+  });
+
+  it('importArchiveBytes 未注入 confirm → 安全缺省取消（12.2#2——bytes 链同缺省）', async () => {
+    const h = makeHarness();
+    await expect(h.orch.importArchiveBytes(BYTES)).rejects.toBeInstanceOf(ImportCancelledError);
+    expect(h.calls.zipImport).toEqual([{ bytes: BYTES, phase: 'inspect' }]); // 仅 inspect 零 commit
+    expect(h.calls.dropNodes).toHaveLength(0);
+  });
+
+  it('inspectBytes：summary+token（安全校验＋C-02 校验归位；不 confirm 不落盘不入库——flow 安装链消费面）', async () => {
+    const h = makeHarness();
+    const out = await h.orch.inspectBytes(BYTES);
+    expect(h.calls.zipImport).toEqual([{ bytes: BYTES, phase: 'inspect' }]);
+    expect(Object.keys(out.summary).sort()).toEqual(['categories', 'manifest', 'noScript', 'nodes']);
+    expect(out.token).toBe('a'.repeat(64));
+    expect(h.calls.dropNodes).toHaveLength(0); // 零落图
+    expect(h.calls.storageInvoke).toHaveLength(0); // 零入库
+    expect(h.calls.registered).toHaveLength(0); // 零注册
+  });
+
+  it('inspectBytes 撞内置命名空间 → 拒入（C-02 校验不因 bytes 链缺位——02 §12.4）', async () => {
+    const h = makeHarness({
+      inspect: {
+        nodes: [
+          {
+            type: 'data.transform',
+            name: '伪装内置',
+            position: { x: 0, y: 0 },
+            params: {},
+            definition: defOf({ type: 'data.transform' }),
+            noScript: false,
+          },
+        ],
+        noScript: [],
+        categories: [],
+        manifest: { kind: 'node', name: '伪装包', version: '1.0.0' },
+        token: 'a'.repeat(64),
+      },
+    });
+    const err = await h.orch.inspectBytes(BYTES).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('拒入');
+    expect(h.calls.zipImport).toHaveLength(1); // 仅 inspect
+  });
+
+  it('commitBytes：commit＋register(defs)（不落画布不入节点库——flow 安装链：落图归 FlowInstaller）', async () => {
+    const h = makeHarness();
+    const res = await h.orch.commitBytes(BYTES, 'a'.repeat(64), [XHS_DEF]);
+    expect(h.calls.zipImport).toEqual([{ bytes: BYTES, phase: 'commit', token: 'a'.repeat(64) }]);
+    expect(h.calls.registered).toEqual([XHS_DEF]); // C-05 register 保留在 C-08 链内（03 C-09 §2）
+    expect(h.calls.dropNodes).toHaveLength(0); // 零落图
+    expect(h.calls.storageInvoke).toHaveLength(0); // 零 library 写
+    expect(res).toEqual(commitRes());
   });
 });

@@ -66,3 +66,43 @@ export type {
   WorkshopMessage,
   WorkshopStoreState,
 } from './workshop-store';
+
+// T5-04：计划校验六查（§3 PlanValidator 行＋§1 六环节 4 段；02 §9.1 冻结序权威）
+export {
+  createPlanValidator,
+  DEFAULT_PLAN_EXIT,
+  DEFAULT_PLAN_PORT,
+  resolvePlanEdges,
+} from './plan-validator';
+export type {
+  PlanCheckId,
+  PlanIssue,
+  PlanValidator,
+  PlanValidatorDeps,
+} from './plan-validator';
+
+// T5-04：确认闸卡片状态机（§3 ConfirmGate 行＋§1 六环节 5 段；01 A-10.2 冻结）
+export { ConfirmGateError, createConfirmGate } from './confirm-gate';
+export type {
+  ConfirmCard,
+  ConfirmCardKind,
+  ConfirmGate,
+  ConfirmGateDeps,
+  ConfirmGateErrorCode,
+  ConfirmOutcome,
+  ConfirmStatus,
+  DiffCard,
+  DiffFieldChange,
+  StagedCard,
+} from './confirm-gate';
+
+// T5-04：「一键生成」确认后编排（§3 FlowMaterializer 行＋§1 六环节 6 段；01 A-10.3）
+export { createFlowMaterializer, WORKSHOP_FLOW_LABEL } from './flow-materializer';
+export type {
+  DefinitionLookup,
+  FlowMaterializer,
+  FlowMaterializerDeps,
+  MaterializeFailureCode,
+  MaterializeResult,
+  PlanLayoutFn,
+} from './flow-materializer';

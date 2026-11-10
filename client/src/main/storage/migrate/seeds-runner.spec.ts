@@ -1,13 +1,23 @@
 // SeedsRunner＋open 装配序套件（T1-03 验收；C-06 §6.1d＋§6.1f；双引擎）。
-// 本波口径：definitions=12（≡ BUILTIN_TYPE_IDS）；=21 全量断言随 P5 C-08 接线补跑（区头 ⚠②）。
+// 本波口径：SeedsRunner 单独面 definitions=12（≡ BUILTIN_TYPE_IDS——种子本体，02 §13.2 封版锚）；
+// **=21 全量断言已随 T5-08 补跑**（P1 区头 ⚠② 收口——下方「storage seed＋示例预装」段：
+// open() 挂点注入真 ExamplePreloader 后的完成态）。
 // 断言面：空库 open → flows=9/definitions=12/library=3；二启零 delta（全表逐行快照深相等）；
 // 伪造 seed_flags 缺 f9 → 仅补 f9、既有行不动；reopen 后 journal_mode=wal、foreign_keys=on；
 // ensureInitialVersions 给无版本流程补「初始版本」；preloadExamples 挂点时序（迁移后、种子前）。
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { DbEngine } from '../engine/connection';
 import { makeTempDb, TEST_ENGINES } from '../testing/harness';
 import { BUILTIN_TYPE_IDS } from '@constella/shared/constants';
 import { StorageLayer } from '../storage-layer';
+// T5-08（C-08 §3 示例资产段——测试面跨域消费：预装器/导入链组件/示例类型集）
+import { EXAMPLE_TYPES } from '../../zip/example-assets';
+import { createExamplePreloader } from '../../zip/example-preloader';
+import { createAssetInstaller } from '../../zip/asset-installer';
+import { createPackageParser } from '../../zip/package-parser';
+import { createZipReader } from '../../zip/zip-reader';
+import { createZipSecurityValidator } from '../../zip/zip-security-validator';
 
 /** 全库逐行快照（二启零 delta 断言面——按表名分组排序序列化） */
 function dumpAll(layer: StorageLayer): Record<string, unknown[]> {
@@ -221,6 +231,119 @@ describe.each(TEST_ENGINES)('storage seed [%s]', (engine: DbEngine) => {
       expect(snap).toBeUndefined(); // 用户数据随删库清除
       layer.close();
       vi.restoreAllMocks();
+    } finally {
+      tmp.dispose();
+    }
+  });
+});
+
+// ————————————————————————————————————————————
+// T5-08 补跑（C-06 §6.1d 联动——P1 区头 ⚠② 收口）：open() 挂点注入真 ExamplePreloader
+// （迁移完成后、种子流程写入前——M4 裁决 2/#11）后的完成态断言。生产装配同构
+// （production-assembly preloadExamples 回调——C-08 §3 ExamplePreloader 组件行复用处）。
+// ————————————————————————————————————————————
+
+/** 入库示例资产目录（client/assets/examples——gen-examples.mjs 确定性产物） */
+const EXAMPLES_DIR = path.resolve(__dirname, '..', '..', '..', '..', 'assets', 'examples');
+
+/** open() 挂点真实现注入（生产同构 wiring：AssetInstaller 直调面=C-06 main 内直调） */
+function openWithExamples(
+  engine: DbEngine,
+  tmp: ReturnType<typeof makeTempDb>,
+  installedLog: number[],
+): StorageLayer {
+  const layer = new StorageLayer(engine);
+  layer.open(tmp.dir, {
+    preloadExamples: async () => {
+      // hasType=内置 12 ∪ definitions DAO（PackageParser 未知 type 兜底判定面——index.ts 同构）
+      const hasType = (t: string): boolean =>
+        (BUILTIN_TYPE_IDS as readonly string[]).includes(t) ||
+        layer.dao.definitions.loadAll().some((doc) => doc.type === t);
+      const installer = createAssetInstaller({
+        reader: createZipReader(),
+        validator: createZipSecurityValidator(),
+        parser: createPackageParser({ hasType }),
+        nodeTypesRoot: path.join(tmp.dir, 'node-types'),
+        definitions: { upsert: (doc) => layer.dao.definitions.upsert(doc) },
+        assetPackages: {
+          upsert: (args) => layer.dao.assetPackages.upsert(args),
+        },
+      });
+      const preloader = createExamplePreloader({
+        examplesDir: EXAMPLES_DIR,
+        installer,
+        assetPackages: layer.dao.assetPackages, // hasHash 幂等查面（T5-08 增补）
+      });
+      const res = await preloader.preloadIfMissing();
+      installedLog.push(res.installed);
+    },
+  });
+  return layer;
+}
+
+describe.each(TEST_ENGINES)('storage seed＋示例预装 [%s]', (engine: DbEngine) => {
+  it('空库首启（挂点预装→种子）：definitions=21（12 builtin＋9 custom≡EXAMPLE_TYPES）＋asset_packages=9＋flows=9＋library=3（§6.1d 收口）', async () => {
+    const tmp = makeTempDb();
+    try {
+      const installed: number[] = [];
+      const layer = openWithExamples(engine, tmp, installed);
+      await layer.opened; // 异步挂点→种子链完成后（open 完成态）
+      expect(installed).toEqual([9]); // 首启 9 包全预装
+      expect(counts(layer)).toEqual({ flows: 9, versions: 9, definitions: 21, library: 3 });
+      const one = (sql: string): number => (layer.connection.prepare(sql).get() as { c: number }).c;
+      expect(one('SELECT COUNT(*) AS c FROM asset_packages')).toBe(9); // §6.7 asset_packages=9
+      // kind 构成：12 builtin（≡BUILTIN_TYPE_IDS）＋9 custom（≡EXAMPLE_TYPES——不撞内置）
+      const rows = layer.connection.prepare('SELECT type, kind FROM node_definitions').all() as Array<{
+        type: string;
+        kind: string;
+      }>;
+      const builtin = rows.filter((r) => r.kind === 'builtin').map((r) => r.type).sort();
+      const custom = rows.filter((r) => r.kind === 'custom').map((r) => r.type).sort();
+      expect(builtin).toEqual([...BUILTIN_TYPE_IDS].sort());
+      expect(custom).toEqual([...EXAMPLE_TYPES].sort());
+      // 落盘面抽查：示例脚本资产在位（SandboxExecutor 白名单根 userData/node-types 同源）
+      expect(
+        layer.connection.prepare('SELECT dir FROM asset_packages WHERE node_type = :t').get({ t: 'xhs.search' }),
+      ).toMatchObject({ dir: path.join(tmp.dir, 'node-types', 'xhs.search', '1.0.0') });
+      layer.close();
+    } finally {
+      tmp.dispose();
+    }
+  });
+
+  it('二启零 delta（§6.7）：全表逐行快照深相等＋二启预装 installed=0（hash 幂等）', async () => {
+    const tmp = makeTempDb();
+    try {
+      const installed: number[] = [];
+      const l1 = openWithExamples(engine, tmp, installed);
+      await l1.opened;
+      const before = dumpAll(l1);
+      l1.close();
+
+      const l2 = openWithExamples(engine, tmp, installed);
+      await l2.opened;
+      expect(installed).toEqual([9, 0]); // 二启零预装
+      expect(dumpAll(l2)).toEqual(before); // 全表零 delta（含 updated_at/asset_packages/seed_flags）
+      l2.close();
+    } finally {
+      tmp.dispose();
+    }
+  });
+
+  it('示例可被同型自定义节点覆盖（01 A-4.02）：后装同型 custom 定义 upsert 覆盖示例行、definitions 仍 21', async () => {
+    const tmp = makeTempDb();
+    try {
+      const layer = openWithExamples(engine, tmp, []);
+      await layer.opened;
+      // 后装同型自定义（C-13 editDefinition/zip 导入四入口任一——同名同型 upsert 语义）
+      const example = layer.dao.definitions.loadAll().find((doc) => doc.type === 'xhs.search')!;
+      layer.dao.definitions.upsert({ ...example, meta: { ...example.meta, name: '搜索采集 v2' } });
+      const after = layer.dao.definitions.loadAll();
+      expect(after).toHaveLength(21); // 覆盖不新增（01 A-11.1）
+      const replaced = after.find((doc) => doc.type === 'xhs.search')!;
+      expect(replaced.meta.name).toBe('搜索采集 v2');
+      expect(replaced.kind).toBe('custom'); // 示例行=普通 custom 行（无分支保护）
+      layer.close();
     } finally {
       tmp.dispose();
     }

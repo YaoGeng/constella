@@ -54,13 +54,22 @@ const vZipExport: PayloadValidator = (input) => {
   ]);
 };
 
-/** zip:import 两段式（02 v1.0b：inspect {path,phase}｜commit {path,phase,token}） */
+/** Uint8Array 校验（bytes 变体——02 v1.0e；局部定义不扩 validators 公共面） */
+const vBytes: PayloadValidator = (input) =>
+  input instanceof Uint8Array ? ok(input) : fail(['须为 Uint8Array（字节源）']);
+
+/** zip:import 两段式×双源（02 v1.0b：inspect {path,phase}｜commit {path,phase,token}；
+ * ✅ 02 v1.0e：bytes 变体 {bytes,phase[,token]}——download 字节直入，通道面不变） */
 const vZipImport: PayloadValidator = (input) => {
   const inspect = vObject({ path: vString(), phase: vEnum('inspect') })(input);
   if (inspect.ok) return inspect;
   const commit = vObject({ path: vString(), phase: vEnum('commit'), token: vString() })(input);
   if (commit.ok) return commit;
-  return fail([...inspect.errors, ...commit.errors]);
+  const bytesInspect = vObject({ bytes: vBytes, phase: vEnum('inspect') })(input);
+  if (bytesInspect.ok) return bytesInspect;
+  const bytesCommit = vObject({ bytes: vBytes, phase: vEnum('commit'), token: vString() })(input);
+  if (bytesCommit.ok) return bytesCommit;
+  return fail([...inspect.errors, ...commit.errors, ...bytesInspect.errors, ...bytesCommit.errors]);
 };
 
 /**

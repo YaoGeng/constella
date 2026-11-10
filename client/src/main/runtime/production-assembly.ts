@@ -15,9 +15,14 @@
 //     〔V1.0 缺省 allowlist ['*']，PM 缺省①〕）；全序织入=cdp slot 包装（启动 net.init=cdp.init
 //     后主窗前／退出 net.dispose=sandbox.dispose 后 destroyAllLaneWindows 前，PM 缺省②——
 //     AppRuntime 无 net 调用点，T5-12a 领地不含 app-runtime.ts，观察面位次等价）。
+//   - ExamplePreloader（T5-08 装配）：示例资产 9 首启预装——deps.exampleAssetsDir 注入即生效
+//     （AssetInstaller 直调＝C-08 main 侧管线复用；挂载点=StorageService.init 内 open() 迁移后、
+//     种子流程前——M4 裁决 2/#11 经 AppRuntime preloadExamples 注入位）。缺省不注入=T4-13 空
+//     实现缺省语义保持（无资产目录的测试宿主零预装）。
 //
 // onStep：生命周期步骤记录（冒烟「启动/退出全序」断言面——AppRuntime 调序经 slot 包装透出）。
 import path from 'node:path';
+import { BUILTIN_TYPE_IDS } from '@constella/shared/constants';
 import { IPC_CHANNELS } from '@constella/shared/ipc';
 import type { AiSettings } from '@constella/shared/settings';
 import { CdpBridge, CdpPortPool, CdpSessionManager, type CdpBrowserWindowConstructor } from '../cdp';
@@ -26,6 +31,13 @@ import { NetProxyBridge, netEligibleDefinition } from '../net';
 import { SandboxExecutor, type SdkModulePaths } from '../sandbox';
 import { SQLITE_ENGINE } from '../storage/engine/sqlite-engine';
 import { StorageService, type ZipExportPipeline, type ZipImportPipeline } from '../storage-bridge';
+import {
+  createAssetInstaller,
+  createExamplePreloader,
+  createPackageParser,
+  createZipReader,
+  createZipSecurityValidator,
+} from '../zip';
 import { createDaoSettingsKv } from '../vault/settings-kv';
 import { createRecoverableVault, type RecoverableVault } from '../vault/vault-recovery';
 import type { SafeStorageLike } from '../vault/secret-vault';
@@ -67,6 +79,8 @@ export interface ProductionAssemblyDeps {
   zipExportPipeline?: ZipExportPipeline;
   /** zip:import 管线（C-08〔P5〕注入位；缺省=stub 骨架） */
   zipImportPipeline?: ZipImportPipeline;
+  /** 示例资产目录（T5-08：client/assets/examples 9 zip 随分发——ExamplePreloader 预装源；缺省不注入=空实现挂点保持） */
+  exampleAssetsDir?: string;
   /** 生命周期步骤记录（冒烟断言面；生产缺省不注入） */
   onStep?: (step: string) => void;
   /** 日志面（缺省 console） */
@@ -97,10 +111,15 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
   // 构造又需 services——环以两段装配解（AppRuntime 消费 services 只在 startup/shutdown 时，
   // 彼时下方 services 已构造完成）。
   let slots: MainServiceSlots | undefined;
+  // ExamplePreloader 挂载步（T5-08）：真实现经下方 storage 装配后回填——回调调用点=startup
+  // 步骤 4（StorageService.init→open() 迁移后、种子前），彼时 storage 已构造，闭包回填安全。
+  // 缺省不注入（deps.exampleAssetsDir 未传）=T4-13 空实现缺省语义保持。
+  let preloadExamplesHook: () => void | Promise<void> = () => {};
   const runtime = new AppRuntime({
     electron,
     rendererDir: deps.rendererDir,
     preloadPath: deps.preloadPath,
+    preloadExamples: () => preloadExamplesHook(),
     services: {
       get storage() {
         return slots?.storage;
@@ -130,6 +149,33 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
     ...(deps.zipImportPipeline !== undefined ? { zipImport: deps.zipImportPipeline } : {}),
     ...(deps.log !== undefined ? { log: deps.log } : {}),
   });
+
+  // ———— ExamplePreloader（T5-08 / C-08 §3：示例资产 9 首启预装——source=builtin 免确认〔W-35
+  // 裁定 A〕，AssetInstaller 直调=同一安全校验管线复用；幂等=assetPackages content_hash——
+  // 二启零 delta。hasType=内置 12 ∪ definitions DAO（main 内直调，index.ts 同构闭包）。————
+  if (deps.exampleAssetsDir !== undefined) {
+    const hasKnownExampleType = (t: string): boolean =>
+      (BUILTIN_TYPE_IDS as readonly string[]).includes(t) ||
+      storage.layer.dao.definitions.loadAll().some((doc) => doc.type === t);
+    const examplePreloader = createExamplePreloader({
+      examplesDir: deps.exampleAssetsDir,
+      installer: createAssetInstaller({
+        reader: createZipReader(),
+        validator: createZipSecurityValidator(),
+        parser: createPackageParser({ hasType: hasKnownExampleType }),
+        nodeTypesRoot: path.join(deps.userDataDir, 'node-types'),
+        definitions: { upsert: (doc) => storage.layer.dao.definitions.upsert(doc) },
+        assetPackages: {
+          upsert: (args) => storage.layer.dao.assetPackages.upsert(args),
+        },
+      }),
+      assetPackages: storage.layer.dao.assetPackages, // hasHash 幂等查面（T5-08 增补）
+      ...(deps.log !== undefined ? { log: deps.log } : {}),
+    });
+    preloadExamplesHook = async () => {
+      await examplePreloader.preloadIfMissing(); // {installed} 结果面归日志，挂点契约=void
+    };
+  }
 
   // ———— SecretVault（步骤 5；损坏恢复面=T4-15 🟡 移交最小恢复）————
   const vault = createRecoverableVault(
@@ -232,6 +278,11 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
       init: async (options) => {
         step('storage.init');
         await storage.init(options);
+        // T5-08：异步 preloadExamples 挂点（示例预装）→种子链收尾（C-06 §1 open 注记的
+        // layer.opened 消费点）——startup 步骤 4 完成态=预装＋种子均落库，下游〔vault/cdp/
+        // 主窗/renderer〕不见半开库（C-05 装载/flows 面零竞态）。同步钩子/缺省时 opened=null
+        // 直通（T4-13/T4-20 既有语义不变）。
+        await storage.layer.opened;
       },
       close: () => {
         step('storage.close'); // WAL checkpoint

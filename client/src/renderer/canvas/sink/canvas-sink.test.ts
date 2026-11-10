@@ -1,6 +1,7 @@
 // CanvasSink / FlowSwitcher 用例（T3-08；C-01 §1 M4 会签 #1 导出面——签名级验证）。
 import { describe, expect, it, beforeEach } from 'vitest';
 import { useFlowStore } from '../stores/flow-store';
+import type { CanvasNodeData } from '../node-types';
 import { createCanvasSink, createFlowSwitcher } from './canvas-sink';
 
 const DOC = {
@@ -31,6 +32,24 @@ describe('CanvasSink（落图 seam）', () => {
     useFlowStore.getState().undo();
     expect(useFlowStore.getState().nodes).toHaveLength(1); // 整批回退
     expect(useFlowStore.temporal.getState().pastStates.length).toBe(before - 1); // 恰一条
+  });
+
+  it('dropNodes 透传 name/noScript（序列化语义字段——T5-07 评审裁定 B 转交：serialize 后 noScript 不丢，运行闸预警有效）', () => {
+    const ids = sink.dropNodes([
+      { type: 'xhs.search', name: '小红书搜索', noScript: true, x: 10, y: 20, params: { query: '咖啡' } },
+      { type: 'llm.chat', x: 46, y: 60 }, // 未带 name/noScript——缺省不落（现状形不变）
+    ]);
+    const dropped = useFlowStore.getState().nodes.find((n) => n.id === ids[0]);
+    expect((dropped?.data as CanvasNodeData).name).toBe('小红书搜索');
+    expect((dropped?.data as CanvasNodeData).noScript).toBe(true);
+    const plain = useFlowStore.getState().nodes.find((n) => n.id === ids[1]);
+    expect((plain?.data as CanvasNodeData).name).toBeUndefined();
+    expect((plain?.data as CanvasNodeData).noScript).toBeUndefined();
+    // serialize（FlowDoc）后仍在——noScript 运行闸（02 §8.4）不击穿
+    const doc = useFlowStore.getState().serialize();
+    const ser = doc.nodes.find((n) => n.id === ids[0]);
+    expect(ser?.name).toBe('小红书搜索');
+    expect(ser?.noScript).toBe(true);
   });
 
   it('dropAtViewportCenter：视口中心落点（deps.viewportCenter 注入）', () => {

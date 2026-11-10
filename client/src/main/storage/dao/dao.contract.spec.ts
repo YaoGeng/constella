@@ -357,6 +357,9 @@ describe.each(TEST_ENGINES)('storage dao [%s]', (engine: DbEngine) => {
         manifest: { kind: 'node', name: 'x' },
       });
       expect(second).toEqual({ id: first.id, reused: true });
+      // hasHash（T5-08 增补——ExamplePreloader 幂等查面）：命中/未命中两态
+      expect(dao.assetPackages.hasHash('sha256-abc')).toBe(true);
+      expect(dao.assetPackages.hasHash('sha256-other')).toBe(false);
       const rows = dao.assetPackages.listByType('cdp.extract');
       expect(rows).toHaveLength(1);
       expect(rows[0]?.manifest).toEqual({ kind: 'node', name: 'x' });

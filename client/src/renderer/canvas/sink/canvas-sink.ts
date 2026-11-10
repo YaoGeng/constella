@@ -20,6 +20,11 @@ export interface NodeDropSpec {
 export interface PositionedNodeSpec extends NodeDropSpec {
   x: number;
   y: number;
+  /** 实例名（序列化语义字段——C-08/C-09 落节点透传；缺省=消费侧按 type 兜底） */
+  name?: string;
+  /** 无脚本标记（缺 scripts/ 资产的强节点——serialize 后须保留，02 §8.4 运行闸；
+   *  T5-07 评审裁定 B 转交：导入链 dropNodes 实例 noScript 丢失会击穿 startRun 预警） */
+  noScript?: boolean;
 }
 
 export interface CanvasSink {
@@ -41,7 +46,14 @@ function specToNode(spec: PositionedNodeSpec, id: string): Node {
     id,
     type: FLOW_NODE_TYPE,
     position: { x: spec.x, y: spec.y },
-    data: { nodeId: id, type: spec.type, params: spec.params ?? {} },
+    data: {
+      nodeId: id,
+      type: spec.type,
+      params: spec.params ?? {},
+      // 序列化语义字段透传（CanvasNodeData——缺省不落键，与 serialize 侧条件落键同形）
+      ...(spec.name !== undefined ? { name: spec.name } : {}),
+      ...(spec.noScript === true ? { noScript: true } : {}),
+    },
   };
 }
 

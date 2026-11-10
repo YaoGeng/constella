@@ -100,6 +100,10 @@ const assembly = assembleProductionRuntime({
     bootstrap: path.resolve(appRoot, '..', 'sdk', 'src', 'bootstrap.ts'),
   },
   pyPackageDir: path.resolve(appRoot, '..', 'sdk', 'py'), // py 链装配（缺此=RUN-ENV-MISSING 降级）
+  // T5-08（C-08 §3 ExamplePreloader）：示例资产 9 zip 随 client 分发（scripts/gen-examples.mjs
+  // 确定性产物）——装配注入后 open() 迁移后、种子前逐包预装（dev appRoot=client 根；
+  // 打包产物路径随 P6/B1 分发波校准——esbuild.mjs 同留痕口径）。
+  exampleAssetsDir: path.join(appRoot, 'assets', 'examples'),
 });
 
 void assembly.runtime.startup().catch((err: unknown) => {

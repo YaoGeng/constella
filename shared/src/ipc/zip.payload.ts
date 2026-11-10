@@ -43,6 +43,13 @@ export interface ZipImportInspectReq {
   phase: 'inspect';
 }
 
+/** inspect 段字节变体（✅ 02 v1.0e 勘误〔2026-11-10 PM 裁决〕：`{bytes}` 变体——market download
+ * 字节直入导入链，不落临时文件；响应形/token 语义与 path 变体同面） */
+export interface ZipImportInspectBytesReq {
+  bytes: Uint8Array;
+  phase: 'inspect';
+}
+
 /** inspect 段响应＝导入清单（C-08 §1 ImportSummary 冻结形）＋token（绑定内容 SHA-256，防调包） */
 export interface ZipImportInspectRes {
   /** 节点清单（C-08 §1 冻结 unknown[]；瀑布排布前原始清单） */
@@ -65,6 +72,14 @@ export interface ZipImportCommitReq {
   token: string;
 }
 
+/** commit 段字节变体（✅ 02 v1.0e 同源：bytes 链 commit 段不落临时文件——renderer 持 download
+ * 字节重传；token 复验=bytes 内容 SHA-256，与 path 变体同语义） */
+export interface ZipImportCommitBytesReq {
+  bytes: Uint8Array;
+  phase: 'commit';
+  token: string;
+}
+
 /** 导入产物节点（C-08 §1 ImportedNode；瀑布排布入画布的节点实例——形=FlowDoc.nodes 元素） */
 export type ImportedNode = FlowNode;
 
@@ -74,6 +89,11 @@ export interface ZipImportCommitRes {
   noScript: string[];
 }
 
-/** zip:import req/res 联合（两段式同通道；X-01 #8⑧③） */
-export type ZipImportReq = ZipImportInspectReq | ZipImportCommitReq;
+/** zip:import req/res 联合（两段式同通道；X-01 #8⑧③；✅ v1.0e：path/bytes 双源 × inspect/commit
+ * 两段=四变体——**通道名/通道数不变**（check-ipc-surface 面不受影响）） */
+export type ZipImportReq =
+  | ZipImportInspectReq
+  | ZipImportCommitReq
+  | ZipImportInspectBytesReq
+  | ZipImportCommitBytesReq;
 export type ZipImportRes = ZipImportInspectRes | ZipImportCommitRes;

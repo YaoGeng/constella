@@ -92,10 +92,16 @@ describe('T4-20 组收尾一：启动全序（§3 生命周期段——生产装
     expect([...channels].sort()).toEqual([...IPC_INVOKE_CHANNELS].sort());
   }, TEST_TIMEOUT);
 
-  it('真通道冒烟：flows.list 往返（种子流程）／未知 op→IPC-UNKNOWN-OP／zip:export stub→ZIP-WRITE-FAILED', async () => {
+  it('真通道冒烟：flows.list 往返（种子流程）／definitions=21（T5-08 示例预装联跑收口）／未知 op→IPC-UNKNOWN-OP／zip:export stub→ZIP-WRITE-FAILED', async () => {
     const ok = await invoke<{ items: unknown[] }>(IPC_CHANNELS.storageInvoke, { op: 'flows.list' });
     expect(ok.ok).toBe(true);
     expect((ok.result?.items ?? []).length).toBeGreaterThanOrEqual(9); // f1~f9 种子（T1-03）
+
+    // T5-08 联跑收口（真装配链 exampleAssetsDir 已注入）：open 完成态 definitions=21
+    // （12 builtin＋9 示例——C-06 §6.1d 口径；此前无既有断言假设 12，计数首冻结为 21）
+    const defs = await invoke<unknown[]>(IPC_CHANNELS.storageInvoke, { op: 'definitions.loadAll' });
+    expect(defs.ok).toBe(true);
+    expect((defs.result ?? []).length).toBe(21);
 
     const unknown = await invoke(IPC_CHANNELS.storageInvoke, { op: 'nope.nope' });
     expect(unknown.ok).toBe(false);

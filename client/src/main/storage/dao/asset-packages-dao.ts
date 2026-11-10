@@ -44,6 +44,17 @@ export class AssetPackagesDao {
     return { id, reused: false };
   }
 
+  /**
+   * content_hash 查询（T5-08 增补——ExamplePreloader 幂等判定面：同 hash 已登记即整包跳过，
+   * 二启零 delta 的前置查；upsert 的防重只在写侧，此处补读侧查询——main 内部面，不进 IPC 白名单）。
+   */
+  hasHash(contentHash: string): boolean {
+    const row = this.conn()
+      .prepare('SELECT 1 FROM asset_packages WHERE content_hash = :hash LIMIT 1')
+      .get({ hash: contentHash });
+    return row !== undefined;
+  }
+
   listByType(nodeType: string): AssetPackageRow[] {
     const rows = this.conn()
       .prepare('SELECT id, node_type, pkg_version, content_hash, dir, manifest, created_at FROM asset_packages WHERE node_type = :t ORDER BY created_at DESC, rowid DESC')

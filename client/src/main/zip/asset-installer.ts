@@ -45,6 +45,9 @@ export interface AssetInstallerDeps {
 export interface AssetInstaller {
   /** §3 冻结组件级接口：commit(path,token)——hash 复验→解包落盘→双 upsert→{nodes,noScript} */
   commit(path: string, token: string): Promise<{ nodes: ImportedNode[]; noScript: string[] }>;
+  /** bytes 变体（✅ 02 v1.0e〔T5-10 前置授权 2〕）：market download 字节直入 commit 段——
+   *  不落临时文件；token 复验=bytes 内容 SHA-256（与 path 变体同语义） */
+  commitBytes(bytes: Uint8Array, token: string): Promise<{ nodes: ImportedNode[]; noScript: string[] }>;
 }
 
 function throwReport(report: Extract<SecurityReport, { ok: false }>): never {
@@ -60,15 +63,19 @@ function newImportedNodeId(type: string): string {
 
 export function createAssetInstaller(deps: AssetInstallerDeps): AssetInstaller {
   const conv = createDosTimeConverter();
-  return {
-    async commit(zipPath, token) {
+
+  /** commit 主体（path/bytes 双源共用——同一字节流） */
+  async function commitFromBytes(
+    bytes: Uint8Array,
+    token: string,
+    sourceLabel: string,
+  ): Promise<{ nodes: ImportedNode[]; noScript: string[] }> {
       // ① token=内容 SHA-256 复验（同一字节流——openBytes 复用，杜绝 readFile 双读调包窗口）
-      const bytes = await readFile(zipPath);
       const contentHash = createHash('sha256').update(bytes).digest('hex');
       if (contentHash !== token) {
         throw new ZipError(
           IPC_ERROR_CODES.ZIP_UNSAFE_ENTRY,
-          `导入令牌复验失败：包内容与 inspect 清单不符（${zipPath} 在确认前被调包？）`,
+          `导入令牌复验失败：包内容与 inspect 清单不符（${sourceLabel} 在确认前被调包？）`,
         );
       }
 
@@ -136,6 +143,15 @@ export function createAssetInstaller(deps: AssetInstallerDeps): AssetInstaller {
         ...(n.noScript ? { noScript: true } : {}),
       }));
       return { nodes, noScript: parsed.noScript };
+  }
+
+  return {
+    async commit(zipPath, token) {
+      const bytes = await readFile(zipPath);
+      return commitFromBytes(bytes, token, zipPath);
+    },
+    async commitBytes(bytes, token) {
+      return commitFromBytes(bytes, token, 'bytes 源（download 直入——02 v1.0e）');
     },
   };
 }
