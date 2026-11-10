@@ -17,9 +17,13 @@ export type {
   LlmContentPart,
   LlmMessage,
   NetCap,
+  NetFetchResponse,
   VaultCap,
 } from './caps.ts';
 export { SdkCapUnavailableError, unboundCap } from './caps.ts';
+// net 绑定客户端（T5-12b；K-01 §2 冻结径②——CONSTELLA_NET_WS 端点直连，Node 全局 WebSocket）
+export { DEFAULT_NET_FETCH_TIMEOUT_MS, makeNetCap, NetCapClient, SdkNetError } from './net.ts';
+export type { NetCapOptions } from './net.ts';
 import type { AgentCap, BrowserCap, FileCap, ImCap, LlmCap, NetCap, VaultCap } from './caps.ts';
 
 /** 节点脚本运行上下文（02 §14 冻结成员集：params/input＋七 Cap＋log/sleep/emit） */

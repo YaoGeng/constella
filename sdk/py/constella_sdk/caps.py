@@ -6,6 +6,7 @@
 # 〔包内置 RFC6455 极简文本帧客户端，stdlib〕；net=CONSTELLA_NET_WS 独立 NetProxyBridge；
 # llm=LLM_BASE_URL/API_KEY env 直连；file/vault=本地无桥），届时仅替换 caps 实现、
 # 能力接口形不变（K-01 §8① 替换点）。
+# net 绑定已随 T5-12b 落位（NetCap.fetch 载荷定形=NetFetchResponse，客户端=net.py）。
 # 注：§14 未标注返回形细目的成员以 list[object] 系占位（Session[] 等载荷形未冻结，绑定卡定形）。
 from __future__ import annotations
 
@@ -80,12 +81,27 @@ class LlmCap(Protocol):
     ) -> str: ...
 
 
+class NetFetchResponse(TypedDict):
+    """net fetch 成功载荷（T5-12b 载荷定形——ts 对照物 sdk/src/caps.ts NetFetchResponse）。
+
+    body＝桥线形 bodyB64 解码后的 utf8 文本（非法序列替换字符，ts/py 同构口径）；
+    非 2xx＝in-band 成功（status 真值原样返回，宿主 net-proxy-bridge 冻结语义）；
+    网络层失败不在本形（宿主 status=0 → 客户端抛 SdkNetError NET-FAILED，见 net.py）。
+    二进制 body（bytes 原文）留 V1.1 注记（02 §14 未冻结二进制面）。
+    """
+
+    status: int
+    statusText: str
+    headers: dict[str, str]
+    body: str
+
+
 class NetCap(Protocol):
     """net 能力（02 §14 G-2 裁定新增：fetch(url,{headers}) 经 main 网络代理；域名白名单=N1「网络」类目，白名单外 NET-DENIED）。"""
 
     async def fetch(
         self, url: str, init: dict[str, dict[str, str]] | None = None
-    ) -> object: ...
+    ) -> NetFetchResponse: ...
 
 
 class FileCap(Protocol):

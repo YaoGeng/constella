@@ -60,11 +60,27 @@ export interface SandboxExecutorSlot {
   dispose(): void | Promise<void>;
 }
 
-/** 五服务构造注入位合集（缺省=该服务的启动/退出步跳过，T4-15~T4-20 逐卡填入） */
+/**
+ * NetProxyBridge（T5-12a 接入）：ctx.net 的 main 网络代理宿主（net 段 ws 桥——03 C-M1 §3
+ * NetProxyBridge 行）。⚠ 生命周期驱动位：AppRuntime 无 net 调用点（T5-12a 领地不含
+ * app-runtime.ts）——本槽由 production-assembly 的 cdp slot 包装驱动（启动=cdp.init 后、
+ * 主窗加载 renderer 前；退出=sandbox.dispose 后、cdp.destroyAllLaneWindows 前——PM 缺省②
+ * 位次，steps 观察面等价）；本接口为槽位实名与类型面。
+ */
+export interface NetProxyBridgeSlot {
+  /** 启动序：PortPool 预热（net 段 9321–9420 全段探活——CdpSessionManager.init 同形） */
+  init(): void | Promise<void>;
+  /** 退出序：closeAll（关全部 scope 端点＋还池） */
+  dispose(): void | Promise<void>;
+}
+
+/** 五服务构造注入位合集（缺省=该服务的启动/退出步跳过，T4-15~T4-20 逐卡填入；net=T5-12a） */
 export interface MainServiceSlots {
   storage?: StorageServiceSlot;
   vault?: SecretVaultSlot;
   cdp?: CdpSessionManagerSlot;
   cron?: CronSchedulerSlot;
   sandbox?: SandboxExecutorSlot;
+  /** NetProxyBridge（T5-12a）——生命周期驱动位见 NetProxyBridgeSlot 注释（cdp slot 包装织入） */
+  net?: NetProxyBridgeSlot;
 }

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import type { SdkCapUnavailableError } from '@constella/sdk';
 import pkg from '../package.json';
+import { b64, startMiniNetBridge, type MiniNetBridge } from './mini-net-bridge.ts';
 
 const SDK_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES_DIR = path.join(SDK_ROOT, 'fixtures');
@@ -101,10 +102,10 @@ function baseEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function envWithCtx(ctx: unknown, raw?: string): NodeJS.ProcessEnv {
+function envWithCtx(ctx: unknown, raw?: string, extra?: Record<string, string>): NodeJS.ProcessEnv {
   const env = baseEnv();
   env.CONSTELLA_CTX = raw ?? JSON.stringify(ctx);
-  return env;
+  return { ...env, ...extra };
 }
 
 // ---------- 帧解析与对照 ----------
@@ -315,4 +316,145 @@ describe('caps 未绑定 stub（访问即抛 SDK_CAP_UNAVAILABLE——V1.0 冻�
       expect((caught as Error).message).toContain(`${cap}.${member}`);
     }
   });
+});
+
+// ————————————————————————————————————————————
+// caps net 绑定三态终态（T5-12b——K-01 §6.1 三态②③补全：unbound〔①既有〕/bound 帧往返
+// 〔mock ws 端点=mini-net-bridge〕/白名单外 NET-DENIED）。传输面单测在 net-cap.test.ts、
+// 真宿主 e2e 在 client/src/main/sandbox/sandbox-chain.spec.ts——本段=bootstrap 装配面
+// （CONSTELLA_NET_WS 在场→真 cap、缺场→unboundCap）子进程级判定。
+// ————————————————————————————————————————————
+
+const NET_OK_BODY = 'constella net ✓ 网络代理';
+
+const ENTRY_NET_BOUND = [
+  `import { boot } from '@constella/sdk/bootstrap';`,
+  `boot(async (ctx: import('@constella/sdk').NodeCtx) => {`,
+  `  const res = await ctx.net.fetch('https://ok.example.com/api');`,
+  `  let denied: string | null = null;`,
+  `  try {`,
+  `    await ctx.net.fetch('https://evil.example.net/exfil');`,
+  `  } catch (e) {`,
+  `    denied = (e as { code?: string }).code ?? null;`,
+  `  }`,
+  `  return { data: { status: res.status, statusText: res.statusText, body: res.body, denied } };`,
+  `});`,
+  '',
+].join('\n');
+
+const ENTRY_NET_DENIED = [
+  `import { boot } from '@constella/sdk/bootstrap';`,
+  `boot(async (ctx: import('@constella/sdk').NodeCtx) => {`,
+  `  await ctx.net.fetch('https://evil.example.net/exfil'); // 白名单外——错误帧终态形态`,
+  `  return { data: 'unreachable' };`,
+  `});`,
+  '',
+].join('\n');
+
+const ENTRY_NET_UNBOUND = [
+  `import { boot } from '@constella/sdk/bootstrap';`,
+  `boot(async (ctx: import('@constella/sdk').NodeCtx) => {`,
+  `  await ctx.net.fetch('https://ok.example.com/api'); // 无 CONSTELLA_NET_WS——三态①unbound`,
+  `  return { data: 'unreachable' };`,
+  `});`,
+  '',
+].join('\n');
+
+describe('caps net 绑定三态（K-01 §6.1 终态：②bound 帧往返／③NET-DENIED／①unbound）', () => {
+  let mini: MiniNetBridge;
+
+  beforeAll(async () => {
+    writeFileSync(path.join(ENTRY_DIR, 'net-bound.entry.ts'), ENTRY_NET_BOUND);
+    writeFileSync(path.join(ENTRY_DIR, 'net-denied.entry.ts'), ENTRY_NET_DENIED);
+    writeFileSync(path.join(ENTRY_DIR, 'net-unbound.entry.ts'), ENTRY_NET_UNBOUND);
+    mini = await startMiniNetBridge({
+      replies: {
+        'https://ok.example.com/api': {
+          ok: true,
+          result: { status: 200, statusText: 'OK', headers: {}, bodyB64: b64(NET_OK_BODY) },
+        },
+        'https://evil.example.net/exfil': {
+          ok: false,
+          error: { code: 'NET-DENIED', message: '域名白名单外默认拒绝: evil.example.net' },
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await mini.close();
+  });
+
+  it(
+    '②bound：CONSTELLA_NET_WS 注入 → ctx.net.fetch 帧往返成功＋denied 可判别 → result 终帧、exit 0',
+    async () => {
+      const expected: Expected = {
+        id: 'net-bound',
+        ctx: { params: {}, input: null },
+        exit: 0,
+        frames: [
+          {
+            type: 'result',
+            out: { data: { status: 200, statusText: 'OK', body: NET_OK_BODY, denied: 'NET-DENIED' } },
+          },
+        ],
+      };
+      const res = await runChild(
+        path.join(ENTRY_DIR, 'net-bound.entry.ts'),
+        envWithCtx(expected.ctx, undefined, { CONSTELLA_NET_WS: mini.url }),
+      );
+      assertContract(expected.id, expected, res);
+      // 装配面：env 注入即绑定——单连接承载两次 fetch（客户端连接复用）
+      expect(mini.connections).toBe(1);
+      expect(mini.requests.map((r) => r.id)).toStrictEqual([1, 2]);
+    },
+    CHILD_TIMEOUT_MS * 2,
+  );
+
+  it(
+    '③白名单外：宿主 NET-DENIED 拒绝帧 → error 终帧 name=SdkNetError、code=NET-DENIED、exit 1',
+    async () => {
+      const expected: Expected = {
+        id: 'net-denied',
+        ctx: { params: {}, input: null },
+        exit: 1,
+        frames: [
+          {
+            type: 'error',
+            name: 'SdkNetError',
+            message: '域名白名单外默认拒绝: evil.example.net',
+            code: 'NET-DENIED',
+          },
+        ],
+      };
+      const res = await runChild(
+        path.join(ENTRY_DIR, 'net-denied.entry.ts'),
+        envWithCtx(expected.ctx, undefined, { CONSTELLA_NET_WS: mini.url }),
+      );
+      assertContract(expected.id, expected, res);
+    },
+    CHILD_TIMEOUT_MS * 2,
+  );
+
+  it(
+    '①unbound：缺 CONSTELLA_NET_WS → ctx.net.fetch 即 SDK_CAP_UNAVAILABLE（三态语义不破）',
+    async () => {
+      const expected: Expected = {
+        id: 'net-unbound',
+        ctx: { params: {}, input: null },
+        exit: 1,
+        frames: [
+          {
+            type: 'error',
+            name: 'SdkCapUnavailableError',
+            message: 'SDK_CAP_UNAVAILABLE:net.fetch（能力未绑定；运行时绑定注入见 02 §14/§12.1）',
+            code: 'SDK_CAP_UNAVAILABLE',
+          },
+        ],
+      };
+      const res = await runChild(path.join(ENTRY_DIR, 'net-unbound.entry.ts'), envWithCtx(expected.ctx));
+      assertContract(expected.id, expected, res);
+    },
+    CHILD_TIMEOUT_MS * 2,
+  );
 });

@@ -27,8 +27,12 @@ py 侧同构：`from constella_sdk import NodeCtx` / `from constella_sdk.bootstr
 （`py.typed` PEP 561；`NodeOut` TypedDict 为 X-01 `shared/src/dsl/node-out.ts` 的同构复制，
 非 import——K-01 §2 裁决「py 侧以共享 fixture 对齐」）。
 
-七 Cap 当前为**未绑定 stub**（任一成员访问即抛 `SDK_CAP_UNAVAILABLE`，V1.0 冻结面）；
-绑定实装按 T0-06 会签结论随后续卡落位（K-01 §8① 替换点：换 caps 实现、接口形不变）。
+七 Cap 绑定面：**net 已绑定实装**（T5-12b）——宿主注入 `CONSTELLA_NET_WS`（ws:// 端点，
+NetProxyBridge）即真 cap（`fetch(url,{headers})`，返回 `{status,statusText,headers,body}`
+——body 为 utf8 文本；网络层失败抛 `SdkNetError{code:'NET-FAILED'}`、白名单外抛
+`SdkNetError{code:'NET-DENIED'}`）；缺注入=未绑定 stub（访问即抛 `SDK_CAP_UNAVAILABLE`）。
+其余六 Cap 仍为未绑定 stub，绑定实装按 T0-06 会签结论随后续卡落位（K-01 §8① 替换点：
+换 caps 实现、接口形不变）。
 
 ## 子进程协议（stdout JSON 行，S-5①/② 冻结；stderr 不承载）
 

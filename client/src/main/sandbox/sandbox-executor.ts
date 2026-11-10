@@ -90,8 +90,11 @@ export interface SandboxExecutorDeps {
   llm?: LlmEnvSource;
   /** CDP lane 端点解析（CdpBridge.endpointOf 注入位——空串/未注入=不注入 CDP_WS） */
   cdpEndpointOf?: (laneKey: string) => string;
-  /** NET 端点解析（NetProxyBridge 宿主=T4-20/P5；N1 网络类目判定在装配侧——null/未注入=不注入 NET_WS） */
-  netEndpointOf?: (req: SpawnScriptReq) => string | null;
+  /** NET 端点解析（NetProxyBridge 宿主=T5-12a 已装配；N1 网络类目判定在装配侧——null/未注入=不注入
+   * NET_WS。✅ T5-12a seam 微调（前次盘货「零改或微调」授权）：返回值可 Promise——端口绑定确认
+   * 〔EADDRINUSE 跳号〕必须先于 env 注入、openScope 为 async；spawnScript 预解析后经
+   * assembleChildEnv 的 netEndpoint 字段传入，assembleChildEnv 同步纯函数面不变） */
+  netEndpointOf?: (req: SpawnScriptReq) => string | null | Promise<string | null>;
   /** 树杀实现（缺省=ProcessKiller：taskkill /T /F＋杀后复查 KillReport——T4-17 换装） */
   killTree?: KillTreeFn;
 }
@@ -118,6 +121,9 @@ export interface AssembleEnvInput {
   revealSecret: (refKey: string) => string;
   llm?: LlmEnvSource;
   cdpEndpointOf?: (laneKey: string) => string;
+  /** NET 端点解析结果（spawnScript 预解析——deps.netEndpointOf 可 async，T5-12a 微调；显式
+   * 传入〔含 null〕优先于 netEndpointOf 函数面） */
+  netEndpoint?: string | null;
   netEndpointOf?: (req: SpawnScriptReq) => string | null;
   req: SpawnScriptReq;
   /** 执行器附加 env（TsExecutor ELECTRON_RUN_AS_NODE——S-5 ④） */
@@ -148,7 +154,10 @@ export function assembleChildEnv(input: AssembleEnvInput): Record<string, string
     const endpoint = input.cdpEndpointOf(input.laneKey);
     if (endpoint !== '') env.CONSTELLA_CDP_WS = endpoint; // lane 已开 → 注入（T0-06 条件键）
   }
-  if (input.netEndpointOf !== undefined) {
+  if (input.netEndpoint !== undefined) {
+    // 预解析结果直传（spawnScript 统一路径——deps.netEndpointOf 可 async，T5-12a 微调）
+    if (input.netEndpoint !== null && input.netEndpoint !== '') env.CONSTELLA_NET_WS = input.netEndpoint; // N1 网络类目 → 注入
+  } else if (input.netEndpointOf !== undefined) {
     const endpoint = input.netEndpointOf(input.req);
     if (endpoint !== null && endpoint !== '') env.CONSTELLA_NET_WS = endpoint; // N1 网络类目 → 注入
   }
@@ -273,6 +282,10 @@ export class SandboxExecutor {
       req.lang === 'py'
         ? this.py!.prepare(scriptAbs, req.entry, workdir) // S-4 ②：python -I -X utf8 <entry>＋包同置＋v1.0d 垫片
         : await this.ts.prepare(scriptAbs, this.writeTsEntry(scriptAbs, workdir, req.entry));
+    // NET 端点预解析（T5-12a seam 微调）：deps.netEndpointOf 可返回 Promise（openScope 绑定确认
+    // 先于 env 注入）——await 统一解析（同步值直通），经 netEndpoint 传入；assembleChildEnv 保持同步。
+    const netEndpoint =
+      this.deps.netEndpointOf === undefined ? null : await this.deps.netEndpointOf(req);
     const env = assembleChildEnv({
       mergedParams,
       input: req.input,
@@ -283,7 +296,7 @@ export class SandboxExecutor {
       revealSecret: this.deps.revealSecret,
       llm: this.deps.llm,
       cdpEndpointOf: this.deps.cdpEndpointOf,
-      netEndpointOf: this.deps.netEndpointOf,
+      netEndpoint,
       req,
       executorEnv: spec.env,
     });

@@ -4,6 +4,7 @@
 // 绑定实装按 T0-06 会签结论随后续卡落位（browser=CONSTELLA_CDP_WS ws 客户端直连 lane 桥；
 // net=CONSTELLA_NET_WS 独立 NetProxyBridge；llm=LLM_BASE_URL/API_KEY env 直连；file/vault=本地
 // 无桥），届时仅替换 caps 实现、能力接口形不变（K-01 §8① 替换点）。
+// net 绑定已随 T5-12b 落位（NetCap.fetch 载荷定形=NetFetchResponse，客户端=net.ts）。
 // 注：§14 未标注返回形细目的成员以 unknown 系占位（Session[] 等载荷形未冻结，绑定卡定形）。
 
 /** browser 能力（02 §14：open/click/type/visible/extract/scrollCollect/scrollComments/extractNote/openChat/confirm/comment） */
@@ -35,9 +36,23 @@ export interface LlmCap {
   fill(template: string, who: string, tone: string, avoid?: string): Promise<string>;
 }
 
+/**
+ * net fetch 成功载荷（T5-12b 载荷定形——caps.ts「载荷形未冻结，绑定卡定形」注兑现）：
+ * body＝桥线形 bodyB64 解码后的 utf8 文本（非法序列替换字符，ts/py 同构口径）；
+ * 非 2xx＝in-band 成功（status 真值原样返回，宿主 net-proxy-bridge 冻结语义）；
+ * 网络层失败不在本形（宿主 status=0 → 客户端抛 SdkNetError NET-FAILED，见 net.ts）。
+ * 二进制 body（bytes 原文）留 V1.1 注记（02 §14 未冻结二进制面）。
+ */
+export interface NetFetchResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
 /** net 能力（02 §14 G-2 裁定新增：fetch(url,{headers}) 经 main 进程网络代理执行；域名白名单=节点 N1「网络」权限类目，白名单外默认拒绝——12.1/T0-06 会签 NET-DENIED） */
 export interface NetCap {
-  fetch(url: string, init?: { headers?: Record<string, string> }): Promise<unknown>;
+  fetch(url: string, init?: { headers?: Record<string, string> }): Promise<NetFetchResponse>;
 }
 
 /** file 能力（02 §14 G-2 裁定新增：read/write/list 限该节点运行的沙箱工作目录，路径逃逸拒绝——12.1） */

@@ -21,6 +21,15 @@ import {
   type SandboxTestEnv,
 } from './testing/sandbox-harness';
 import { startFakeCapabilityBridge, type FakeBridgeHandle } from './testing/fake-capability-bridge';
+import { NetProxyBridge } from '../net/net-proxy-bridge';
+// T5-12b e2e 追加段导入（ctx.net 绑定态——N1 网络门整判＋本地 fetch 目标）
+import { writeFileSync } from 'node:fs';
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import type { NodeDefinition } from '@constella/shared/dsl';
+import type { SpawnScriptReq } from '@constella/shared/ipc';
+import { netEligibleDefinition } from '../net/net-gate';
+import type { SandboxExecutor } from './sandbox-executor';
 
 /** 期望资产（S-5 六形态冻结契约——K-01 §6.1 同源复用） */
 interface Expected {
@@ -307,5 +316,243 @@ describe('ts 链 · caps 绑定态（T0-06 会签·PM 登记补跑：fake 桥协
     ]);
     // 拒绝事件日志可见（宿主台账面——真落日志表归 NetProxyBridge 本体 T4-20/P5）
     expect(bridge.denials).toEqual([{ domain: 'evil.example.net', url: 'https://evil.example.net/exfil' }]);
+  }, 60_000);
+});
+
+// ————————————————————————————————————————————
+// 真宿主复跑（T5-12a 验收判据：fake 桥协议面用例改跑真宿主——caps-ws.ts 裸 ws fixture
+// 直连真端点，SDK 侧仍不经 ctx.net〔caps 绑定客户端=T5-12b〕）。cdp 半段仍走 fake 桥
+// （CdpBridge 真宿主链归 cdp 域套件）；net 半段=真 NetProxyBridge（V1.1 收缩位形态：
+// host 供给 ['127.0.0.1']——caps-ws.ts 固定域名均在集外→真拒径＋台账，零外网依赖）。
+// 端口段 9381–9384（net 段 9321–9420 内与 net 域套件 9361–9380 错峰）。
+// ————————————————————————————————————————————
+
+describe('ts 链 · caps 绑定态真宿主复跑（T5-12a：NetProxyBridge net 半段）', () => {
+  let env: SandboxTestEnv;
+  let fake: FakeBridgeHandle;
+  let netBridge: NetProxyBridge;
+
+  beforeAll(async () => {
+    env = makeSandboxEnv();
+    fake = await startFakeCapabilityBridge({ allowDomains: ['allowed.example.com'] });
+    netBridge = new NetProxyBridge({ portRange: { first: 9381, last: 9384 } });
+    await netBridge.init();
+  });
+  afterAll(async () => {
+    await env.makeExecutor().dispose().catch(() => undefined);
+    await netBridge.dispose().catch(() => undefined);
+    await fake.close();
+    env.dispose();
+  });
+
+  it('真宿主：NET_WS 注入真端点 → 子进程裸 ws 帧真往返＋域名集外真拒 NET-DENIED＋宿主台账', async () => {
+    const sb = env.makeExecutor({
+      cdpEndpointOf: () => fake.url, // cdp 半段保持 fake（真 CdpBridge 链归 cdp 域套件）
+      // 生产形态（T5-12a 装配同构）：N1 网络门开后 openScope 首开（async——绑定确认先于注入）
+      netEndpointOf: (req) => netBridge.openScope(req.nodeRunId, ['127.0.0.1']),
+    });
+    const c = collectEvents(sb);
+    await sb.spawnScript(
+      spawnReq({
+        scriptPath: path.join('demo', '1.0.0', 'scripts', 'caps-ws.ts'),
+        laneKey: 'lane-x',
+        nodeRunId: 'r-caps2:n-1',
+      }),
+    );
+    const exit = await c.waitForExit(45_000);
+    expect(exit.code).toBe(0);
+    const term = c.frames().at(-1) as { out: { data: { cdp?: unknown[]; net?: unknown[] } } };
+    // cdp 半段：fake 桥固定应答（既有协议面不动）
+    expect(term.out.data.cdp).toStrictEqual([
+      { id: 1, ok: true, result: {} },
+      { id: 2, ok: true, result: { result: { value: 2 } } },
+    ]);
+    // net 半段：真宿主域名层（连接级 allowlist=['127.0.0.1']——caps-ws.ts 固定域名均在集外）
+    expect(term.out.data.net).toStrictEqual([
+      { id: 1, ok: false, error: { code: 'NET-DENIED', message: '域名白名单外默认拒绝: allowed.example.com' } },
+      { id: 2, ok: false, error: { code: 'NET-DENIED', message: '域名白名单外默认拒绝: evil.example.net' } },
+    ]);
+    // 宿主拒绝台账（可查询——PM 授权形 {time,domain,url}）
+    expect(netBridge.denials()).toMatchObject([
+      { domain: 'allowed.example.com', url: 'https://allowed.example.com/api' },
+      { domain: 'evil.example.net', url: 'https://evil.example.net/exfil' },
+    ]);
+    for (const r of netBridge.denials()) expect(typeof r.time).toBe('number');
+  }, 60_000);
+});
+
+// ————————————————————————————————————————————
+// ctx.net 绑定态 e2e（T5-12b：SDK caps net 绑定客户端 × 真宿主 NetProxyBridge〔T5-12a〕）。
+// 形态：N1 网络门整判（net-gate——类目含「网络」的定义命中）→ openScope（绑定确认先于
+// env 注入）→ CONSTELLA_NET_WS → 子进程脚本内 ctx.net.fetch 真往返；fetch 目标=本测试
+// 进程 127.0.0.1 http 服务（零外网依赖——宿主 nodeFetchImpl 真发 HTTP 到本地口）；
+// 对照=无网络类目定义 → 门不开 → ctx.net.fetch=SDK_CAP_UNAVAILABLE（三态①）。
+// py 侧同判据（lang:'py'——包内置 RFC6455 极简客户端对真 ws 服务端，K-01 §2 冻结径②）。
+// 端口段 9385–9388（net 段 9321–9420 内，与 net 域套件 9361–9380/T5-12a 9381–9384 错峰）。
+// ————————————————————————————————————————————
+
+const NET_E2E_BODY = 'constella-net-e2e';
+
+/** e2e fixture（ts）：ctx.net.fetch 真往返＋白名单外拒径（targetUrl/deniedUrl 经 params 注入） */
+const NET_CAP_E2E_TS = [
+  "import type { NodeCtx, NodeOut } from '@constella/sdk';",
+  'export async function run(ctx: NodeCtx): Promise<NodeOut> {',
+  "  const res = await ctx.net.fetch(String(ctx.params.targetUrl), { headers: { 'x-probe': 'constella' } });",
+  '  let deniedCode: string | null = null;',
+  '  try {',
+  '    await ctx.net.fetch(String(ctx.params.deniedUrl));',
+  '  } catch (e) {',
+  "    deniedCode = (e as { code?: string }).code ?? null;",
+  '  }',
+  '  return { data: { status: res.status, statusText: res.statusText, headers: res.headers, body: res.body, deniedCode } };',
+  '}',
+  '',
+].join('\n');
+
+/** e2e fixture（py）：同判据同构（headers/白名单拒/载荷形） */
+const NET_CAP_E2E_PY = [
+  'from typing import Any',
+  '',
+  'from constella_sdk import NodeCtx',
+  '',
+  '',
+  'async def run(ctx: NodeCtx) -> dict[str, Any]:',
+  '    res = await ctx.net.fetch(str(ctx.params["targetUrl"]), {"headers": {"x-probe": "constella"}})',
+  '    denied_code = None',
+  '    try:',
+  '        await ctx.net.fetch(str(ctx.params["deniedUrl"]))',
+  '    except Exception as e:',
+  '        denied_code = getattr(e, "code", None)',
+  '    return {"data": {"status": res["status"], "statusText": res["statusText"], "headers": res["headers"], "body": res["body"], "deniedCode": denied_code}}',
+  '',
+].join('\n');
+
+describe('ts 链 · ctx.net 绑定态 e2e（T5-12b：SDK net 客户端×真宿主 NetProxyBridge）', () => {
+  let env: SandboxTestEnv;
+  let netBridge: NetProxyBridge;
+  let httpServer: HttpServer;
+  let httpPort = 0;
+  const httpHits: Array<{ url: string; xProbe: string | undefined }> = [];
+  const executors: SandboxExecutor[] = [];
+
+  const netDef = (category: string): NodeDefinition => ({
+    type: 'demo', // 资产树 demo/1.0.0/scripts/* 首段=type（net-gate nodeTypeOfScript 同源）
+    kind: 'custom',
+    meta: { name: 'demo', icon: '', category },
+    ports: { ins: [], outs: [] },
+    paramsSchema: [],
+    exec: null,
+    version: '1.0.0',
+    packageVersion: '1.0.0',
+  });
+
+  /** 生产装配同构的 netEndpointOf：N1 门整判 → 门开=openScope（V1.1 收缩形 host 供给 ['127.0.0.1']） */
+  const gateEndpointOf = (defs: readonly NodeDefinition[]) => async (req: SpawnScriptReq): Promise<string | null> => {
+    return netEligibleDefinition(req.scriptPath, env.nodeTypesRoot, defs) !== undefined
+      ? netBridge.openScope(req.nodeRunId, ['127.0.0.1'])
+      : null;
+  };
+
+  beforeAll(async () => {
+    env = makeSandboxEnv();
+    // 本地 fetch 目标（真宿主 main 侧真发 HTTP——回显 x-probe 证 headers 上桥面）
+    httpServer = createHttpServer((req, res) => {
+      const rawProbe = req.headers['x-probe']; // node http 头可 string[]——归一首值
+      const probe = Array.isArray(rawProbe) ? rawProbe[0] : rawProbe;
+      httpHits.push({ url: req.url ?? '', xProbe: probe });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'echo-x-probe': probe ?? '' });
+      res.end(NET_E2E_BODY);
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    httpPort = (httpServer.address() as AddressInfo).port;
+    netBridge = new NetProxyBridge({ portRange: { first: 9385, last: 9388 } });
+    await netBridge.init();
+    // fixture 置入资产树（ts+py 同判据；targetUrl/deniedUrl 经 params 注入——两 spawn 形共用）
+    const scriptsDir = path.join(env.nodeTypesRoot, 'demo', '1.0.0', 'scripts');
+    writeFileSync(path.join(scriptsDir, 'net-cap-e2e.ts'), NET_CAP_E2E_TS, 'utf8');
+    writeFileSync(path.join(scriptsDir, 'net-cap-e2e.py'), NET_CAP_E2E_PY, 'utf8');
+  });
+  afterAll(async () => {
+    for (const sb of executors) await sb.dispose().catch(() => undefined);
+    await netBridge.dispose().catch(() => undefined);
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    env.dispose();
+  });
+
+  const spawnNetCap = async (
+    overrides: Parameters<SandboxTestEnv['makeExecutor']>[0],
+    script: string,
+    nodeRunId: string,
+    lang: 'ts' | 'py' = 'ts',
+  ) => {
+    const sb = env.makeExecutor(overrides);
+    executors.push(sb);
+    const c = collectEvents(sb);
+    await sb.spawnScript(
+      spawnReq({
+        scriptPath: path.join('demo', '1.0.0', 'scripts', script),
+        lang,
+        params: { targetUrl: `http://127.0.0.1:${httpPort}/api`, deniedUrl: 'https://evil.example.net/exfil' },
+        nodeRunId,
+      }),
+    );
+    return c;
+  };
+
+  it('门开（N1 类目含「网络」）→ ctx.net.fetch 真宿主真往返＋白名单外真拒（ts）', async () => {
+    const c = await spawnNetCap({ netEndpointOf: gateEndpointOf([netDef('网络·演示')]) }, 'net-cap-e2e.ts', 'r-net12b:n-ts');
+    const exit = await c.waitForExit(45_000);
+    expect(exit.code).toBe(0);
+    const term = c.frames().at(-1) as { out: { data: Record<string, unknown> } };
+    expect(term.out.data).toMatchObject({
+      status: 200,
+      statusText: 'OK',
+      body: NET_E2E_BODY,
+      deniedCode: 'NET-DENIED',
+    });
+    // headers 面：请求 headers 上桥（x-probe）→ 真响应头回读（echo-x-probe 回显）
+    expect((term.out.data.headers as Record<string, string>)['echo-x-probe']).toBe('constella');
+    // 真宿主面：scope 已开＋拒绝台账（PM 授权形 {time,domain,url}）
+    expect(netBridge.endpointOf('r-net12b:n-ts')).not.toBe('');
+    expect(netBridge.denials()).toMatchObject([{ domain: 'evil.example.net', url: 'https://evil.example.net/exfil' }]);
+    // 本地 http 目标真达（宿主 main 进程发起——headers 真上桥）
+    expect(httpHits.some((h) => h.url === '/api' && h.xProbe === 'constella')).toBe(true);
+  }, 60_000);
+
+  it('门关（无网络类目）对照 → 不注入 NET_WS → ctx.net.fetch=SDK_CAP_UNAVAILABLE、exit 1', async () => {
+    const c = await spawnNetCap({ netEndpointOf: gateEndpointOf([netDef('工具')]) }, 'net-cap-e2e.ts', 'r-net12b:n-ts-off');
+    const exit = await c.waitForExit(45_000);
+    expect(exit.code).toBe(1);
+    const term = c.frames().at(-1) as { type: string; name: string; code: string; message: string };
+    expect(term.type).toBe('error');
+    expect(term.name).toBe('SdkCapUnavailableError');
+    expect(term.code).toBe('SDK_CAP_UNAVAILABLE');
+    expect(term.message).toContain('net.fetch');
+    // 门未开=无 scope（端点空串——net-gate 整判面）
+    expect(netBridge.endpointOf('r-net12b:n-ts-off')).toBe('');
+  }, 60_000);
+
+  it('门开（py 侧）→ RFC6455 极简客户端对真 ws 服务端同判据真往返（lang=py）', async () => {
+    const c = await spawnNetCap(
+      { netEndpointOf: gateEndpointOf([netDef('网络·演示')]) },
+      'net-cap-e2e.py',
+      'r-net12b:n-py',
+      'py', // py 链 spawn 形参（S-4）——PyExecutor 驱动，RFC6455 极简客户端对真 ws 服务端
+    );
+    const exit = await c.waitForExit(45_000);
+    expect(exit.code).toBe(0);
+    const term = c.frames().at(-1) as { out: { data: Record<string, unknown> } };
+    expect(term.out.data).toMatchObject({
+      status: 200,
+      statusText: 'OK',
+      body: NET_E2E_BODY,
+      deniedCode: 'NET-DENIED',
+    });
+    expect((term.out.data.headers as Record<string, string>)['echo-x-probe']).toBe('constella');
+    expect(netBridge.endpointOf('r-net12b:n-py')).not.toBe('');
+    expect(netBridge.denials()).toMatchObject([
+      { domain: 'evil.example.net', url: 'https://evil.example.net/exfil' },
+      { domain: 'evil.example.net', url: 'https://evil.example.net/exfil' },
+    ]);
   }, 60_000);
 });

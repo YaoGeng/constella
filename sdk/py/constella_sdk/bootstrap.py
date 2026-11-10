@@ -31,6 +31,7 @@ from typing import Any
 
 from . import __version__
 from .caps import unbound_cap
+from .net import _NetCapClient, make_net_cap
 
 
 class SdkError(Exception):
@@ -50,7 +51,7 @@ def _send(obj: dict[str, Any]) -> None:
 
 
 class _Ctx:
-    """NodeCtx 运行时形（log/sleep/emit 真实现；七 Cap=未绑定 stub）。
+    """NodeCtx 运行时形（log/sleep/emit 真实现；net=条件绑定〔T5-12b〕、余六 Cap=未绑定 stub）。
 
     sleep 接口为毫秒（与 ts 一致），内部换算 asyncio.sleep 秒。
     """
@@ -60,12 +61,12 @@ class _Ctx:
         "log", "sleep", "emit",
     )
 
-    def __init__(self, params: dict[str, Any], input_value: Any) -> None:
+    def __init__(self, params: dict[str, Any], input_value: Any, net_client: _NetCapClient | None = None) -> None:
         self.params = params
         self.input = input_value
         self.browser = unbound_cap("browser")
         self.llm = unbound_cap("llm")
-        self.net = unbound_cap("net")
+        self.net = net_client if net_client is not None else unbound_cap("net")
         self.file = unbound_cap("file")
         self.im = unbound_cap("im")
         self.vault = unbound_cap("vault")
@@ -115,6 +116,11 @@ def _error_frame(e: BaseException) -> None:
 def _boot(user_run: Any) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(newline="\n")
+    # net 绑定判据（T0-06 会签：N1 权限类目含「网络」→宿主注入 CONSTELLA_NET_WS）——
+    # 在场=真 cap、缺场=未绑定 stub（三态 unbound 语义不破，K-01 §6.1）。终帧后显式
+    # close（与 ts 同构收尾——释放连接句柄；py 进程退出本亦回收 fd）。
+    net_endpoint = os.environ.get("CONSTELLA_NET_WS")
+    net_client = make_net_cap(net_endpoint) if net_endpoint else None
     try:
         if not callable(user_run):
             raise SdkError("ENTRY_NO_RUN", "脚本未导出 run(ctx)", 2)
@@ -126,7 +132,7 @@ def _boot(user_run: Any) -> int:
         except ValueError:
             raise SdkError("CTX_INVALID_JSON", "CONSTELLA_CTX 不是合法 JSON", 2) from None
         ctx_dict = parsed if isinstance(parsed, dict) else {}
-        ctx = _Ctx(ctx_dict.get("params") or {}, ctx_dict.get("input"))
+        ctx = _Ctx(ctx_dict.get("params") or {}, ctx_dict.get("input"), net_client)
         out = asyncio.run(_invoke(user_run, ctx))
         _validate_out(out)
         _send({
@@ -146,6 +152,9 @@ def _boot(user_run: Any) -> int:
     except Exception as e:  # noqa: BROAD_EXCEPT_OK —— trampoline 顶层边界：ts boot catch 全量同构，任何 run 内异常转错误帧
         _error_frame(e)
         return 1
+    finally:
+        if net_client is not None:
+            net_client.close()  # 释放 net 连接（终帧已落）
 
 
 def boot(user_run: Any) -> None:

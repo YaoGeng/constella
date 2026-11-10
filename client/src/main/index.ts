@@ -12,8 +12,11 @@
 //     （ts 链=electron-as-node；py 链=constella_sdk 包源同置，T4-17）。
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import path from 'node:path';
+import { STORAGE_DAO_ERROR_CODES } from '@constella/shared/constants';
 import { assembleProductionRuntime } from './runtime/production-assembly';
 import { adaptElectronDialog, type ElectronApi } from './runtime/electron-api';
+import { StorageError } from './storage/dao/dao-error';
+import { createZipExportPipeline } from './zip';
 
 const electronApi: ElectronApi = {
   app,
@@ -27,6 +30,7 @@ const electronApi: ElectronApi = {
 
 // app 根（dev/electron . = client 包根；打包产物路径随 P6/B1 分发波校准——留痕）
 const appRoot = app.getAppPath();
+const userDataDir = app.getPath('userData');
 
 const assembly = assembleProductionRuntime({
   electron: electronApi,
@@ -38,7 +42,26 @@ const assembly = assembleProductionRuntime({
   },
   rendererDir: path.join(__dirname, '..', 'renderer'),
   preloadPath: path.join(__dirname, '..', 'preload', 'index.js'),
-  userDataDir: app.getPath('userData'),
+  userDataDir,
+  // T5-06（C-08 §1 zip:export 行）：导出管线真面注入（T4-20 seam——缺省=stub ZIP-WRITE-FAILED；
+  // 头跑冒烟宿主仍不传＝stub 退化面由 T4-20 冒烟守护，设计非遗漏）。DAO/定义经装配产物后向
+  // 闭包接入（管线首调用远晚于装配完成——StorageService.init 期仅存函数引用）；资产根与
+  // SandboxExecutor nodeTypesRoot 同源（node-types=userData 子目录，02 §8.4 自注册资产目录）。
+  zipExportPipeline: createZipExportPipeline({
+    getFlow: (flowId) => {
+      try {
+        return assembly.storage.layer.dao.flows.get(flowId);
+      } catch (err) {
+        if (err instanceof StorageError && err.code === STORAGE_DAO_ERROR_CODES.FLOW_NOT_FOUND) {
+          return undefined; // → 管线转 ZIP-FLOW-NOT-FOUND
+        }
+        throw err;
+      }
+    },
+    getDefinition: (type) =>
+      assembly.storage.layer.dao.definitions.loadAll().find((doc) => doc.type === type),
+    nodeTypesRoot: path.join(userDataDir, 'node-types'),
+  }),
   sdkModules: {
     // monorepo sdk TS 源（T4-16 装配注记：client 无 workspace dep——esbuild alias 显式映射）
     sdk: path.resolve(appRoot, '..', 'sdk', 'src', 'index.ts'),

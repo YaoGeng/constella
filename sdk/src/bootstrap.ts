@@ -11,10 +11,12 @@
 // 能力 stub 抛错 SDK_CAP_UNAVAILABLE）；2=装配错误（ENTRY_NO_RUN/CTX_MISSING/CTX_INVALID_JSON，
 // 重试无意义）。
 //
-// ctx 构造（02 §14/T0-06 会签绑定判据表）：log/sleep/emit 为真实现；七 Cap 本卡一律未绑定
-// stub（访问即抛 SDK_CAP_UNAVAILABLE）——browser/net=ws 端点条件注入、llm=env 直连、
-// file/vault=本地无桥，绑定实装随后续卡接入（K-01 §3 caps 行）。
+// ctx 构造（02 §14/T0-06 会签绑定判据表）：log/sleep/emit 为真实现；七 Cap 绑定面——
+// net=CONSTELLA_NET_WS 在场→真 cap（T5-12b 绑定客户端，net.ts）、缺场=未绑定 stub；
+// browser/llm/file/im/vault/agent 仍一律未绑定 stub（访问即抛 SDK_CAP_UNAVAILABLE）——
+// browser/llm=ws/env 注入位、file/vault=本地无桥，绑定实装随后续卡接入（K-01 §3 caps 行）。
 import { unboundCap } from './caps.ts';
+import { makeNetCap } from './net.ts';
 import type { NodeCtx, NodeOut } from './index.ts';
 import pkg from '../package.json' with { type: 'json' };
 
@@ -35,13 +37,13 @@ const send = (o: unknown): void => {
   process.stdout.write(JSON.stringify(o) + '\n');
 };
 
-function makeCtx(params: Record<string, unknown>, input: unknown): NodeCtx {
+function makeCtx(params: Record<string, unknown>, input: unknown, netClient: ReturnType<typeof makeNetCap> | null): NodeCtx {
   return {
     params,
     input,
     browser: unboundCap('browser'),
     llm: unboundCap('llm'),
-    net: unboundCap('net'),
+    net: netClient ?? unboundCap('net'),
     file: unboundCap('file'),
     im: unboundCap('im'),
     vault: unboundCap('vault'),
@@ -72,6 +74,12 @@ function validateOut(out: unknown): asserts out is NodeOut {
 }
 
 export async function boot(userRun: unknown): Promise<void> {
+  // net 绑定判据（T0-06 会签：N1 权限类目含「网络」→宿主注入 CONSTELLA_NET_WS）——
+  // 在场=真 cap、缺场=未绑定 stub（三态 unbound 语义不破，K-01 §6.1）。
+  // 终帧后须显式 close：ws 保活句柄会阻止子进程按 exitCode 退出（懒连接句柄在
+  // 进程收尾面由 trampoline 释放——宿主强杀链路不依赖此处）。
+  const netEndpoint = process.env.CONSTELLA_NET_WS;
+  const netClient = netEndpoint !== undefined && netEndpoint !== '' ? makeNetCap(netEndpoint) : null;
   try {
     if (typeof userRun !== 'function') {
       throw new SdkError('ENTRY_NO_RUN', '脚本未导出 run(ctx)', 2);
@@ -87,7 +95,7 @@ export async function boot(userRun: unknown): Promise<void> {
       throw new SdkError('CTX_INVALID_JSON', 'CONSTELLA_CTX 不是合法 JSON', 2);
     }
     const p = (parsed ?? {}) as { params?: Record<string, unknown>; input?: unknown };
-    const ctx = makeCtx(p.params ?? {}, p.input);
+    const ctx = makeCtx(p.params ?? {}, p.input, netClient);
     const out = await (userRun as (ctx: NodeCtx) => Promise<unknown>)(ctx);
     validateOut(out);
     send({
@@ -111,5 +119,7 @@ export async function boot(userRun: unknown): Promise<void> {
       stack: typeof err.stack === 'string' ? err.stack.split('\n').slice(0, 4).join('\n') : null,
     });
     process.exitCode = err instanceof SdkError ? err.exitCode : 1;
+  } finally {
+    netClient?.close(); // 释放 net 连接（终帧已落——close 只清保活句柄）
   }
 }

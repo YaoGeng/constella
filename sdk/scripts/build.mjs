@@ -4,6 +4,7 @@
 //   dist/index.js|index.d.ts      —— "." subpath：类型面＋identity 参考实现
 //   dist/bootstrap.js|bootstrap.d.ts —— "./bootstrap" subpath：子进程 trampoline
 //   dist/caps.js|caps.d.ts        —— 被 . 引用的内部模块（随双 subpath 一并装载）
+//   dist/net.js|net.d.ts          —— net 绑定客户端（T5-12b；被 bootstrap 引用的内部模块）
 //
 // 口径：
 //   - JS/类型发射=tsc 5.9（typescript devDep；module ESNext＋package type=module → ESM 产物，
@@ -48,7 +49,7 @@ for (const f of readdirSync(DIST).filter((f) => f.endsWith('.d.ts'))) {
 }
 
 // ---------- 3. 产物核验（§6.4：dts 与双 subpath 目标文件必须在位） ----------
-const REQUIRED = ['index.js', 'index.d.ts', 'bootstrap.js', 'bootstrap.d.ts', 'caps.js', 'caps.d.ts'];
+const REQUIRED = ['index.js', 'index.d.ts', 'bootstrap.js', 'bootstrap.d.ts', 'caps.js', 'caps.d.ts', 'net.js', 'net.d.ts'];
 const missing = REQUIRED.filter((f) => !readdirSync(DIST).includes(f));
 if (missing.length) {
   console.error(`[sdk-build] dist 产物缺失: ${missing.join(', ')}`);

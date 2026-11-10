@@ -11,11 +11,13 @@
 constella_sdk/          # 包本体（随宿主置入沙箱：包目录与 entry 同置脚本目录）
   __init__.py           # 类型面（NodeCtx/NodeOut 形/Cap re-export）＋identity run＋__version__
   caps.py               # 七 Cap Protocol＋未绑定 stub（访问即抛 SDK_CAP_UNAVAILABLE）
+  net.py                # ctx.net 绑定客户端（T5-12b：stdlib 极简 RFC6455 文本帧客户端）
   bootstrap.py          # boot(user_run) trampoline（CONSTELLA_CTX→ctx→run→终帧→exit 0/1/2）
   py.typed              # PEP 561 标记
   THIRD-PARTY-NOTICES.md  # S-9 声明位（零三方自述；随 package-data 进 wheel/sdist，T4-12）
 fixtures/               # 六形态 py 对照脚本（ts 侧 sdk/fixtures/s1~s6 的语义映射物）
 tests/run_contract.py   # 契约验收 harness（12 场景＋版本恒等前置断言）
+tests/run_net.py        # net 绑定验收 harness（T5-12b：进程内客户端面＋子进程 bootstrap 三态）
 pyproject.toml          # 发行元数据（constella-sdk；version 单一来源=__version__）
 ```
 
@@ -23,6 +25,7 @@ pyproject.toml          # 发行元数据（constella-sdk；version 单一来源
 
 ```
 py -I -X utf8 sdk/py/tests/run_contract.py     # 12/12 通过、exit 0
+py -I -X utf8 sdk/py/tests/run_net.py          # net 绑定 2/2 通过、exit 0（T5-12b）
 ```
 
 场景集＝六形态（帧序列对拍 `sdk/fixtures/expected/*.json`＋exit 逐场景）＋装配错误三态

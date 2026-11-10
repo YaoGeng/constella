@@ -6,12 +6,14 @@
 // ＋electron-as-node 子进程）。dist 缺陷修复（T4-04 bundle shared）后首跑回归。
 //
 // 断言面：
-//   1) 启动全序（§3 生命周期段）：storage.init→vault.init→cdp.init→cron.start→sweepOrphans
+//   1) 启动全序（§3 生命周期段）：storage.init→vault.init→cdp.init→net.init→cron.start→
+//      sweepOrphans（T5-12a 五步→六步：net.init=cdp.init 后、主窗加载 renderer 前——PM 缺省②）
 //      ＋主窗在位＋21 通道真注册（storage:invoke/zip:* 在列）；
 //   2) 真通道冒烟：storage:invoke 往返／未知 op→IPC-UNKNOWN-OP／zip:export stub→ZIP-WRITE-FAILED；
 //   3) T4-19 对端联测：cron:fired 真推送→renderer RunGate 三闸复查→startRun（真
 //      flows.get/runs.create/logs 落库往返）；脏闸拒绝→不产生 run＋err 日志；
-//   4) 退出全序：cron.stop→sandbox.dispose（killTree——挂起子进程 pid DEAD）→
+//   4) 退出全序：cron.stop→sandbox.dispose（killTree——挂起子进程 pid DEAD）→net.dispose
+//      （T5-12a：sandbox.dispose 后、cdp.destroyAllLaneWindows 前——PM 缺省②）→
 //      cdp.destroyAllLaneWindows（lane 窗销毁保主窗）→storage.close（WAL checkpoint——进程
 //      退出后 -wal 文件不残留）。
 //
@@ -70,12 +72,14 @@ function storageOverChannel() {
 }
 
 describe('T4-20 组收尾一：启动全序（§3 生命周期段——生产装配同构头跑）', () => {
-  it('生命周期五步恰序：storage.init→vault.init→cdp.init→cron.start→sandbox.sweepOrphans＋主窗在位', async () => {
+  it('生命周期六步恰序：storage.init→vault.init→cdp.init→net.init→cron.start→sandbox.sweepOrphans＋主窗在位', async () => {
+    // T5-12a 改动留痕：五步断言→六步（net.init 插 cdp.init 后、主窗加载 renderer 前——PM 缺省②）
     const { steps } = await head.control<{ steps: string[] }>('steps');
     expect(steps).toEqual([
       'storage.init',
       'vault.init',
       'cdp.init',
+      'net.init',
       'cron.start',
       'sandbox.sweepOrphans',
     ]);
@@ -234,7 +238,7 @@ describe('T4-19 对端联测：cron:fired 真推送→RunGate 三闸复查→sta
 });
 
 describe('T4-20 组收尾一：退出全序（killTree＋销毁 lane 窗＋WAL checkpoint）', () => {
-  it('lane 会话窗在位→挂起脚本 spawn→pid 存活；shutdownNow 全序恰四步＋pid DEAD＋lane 窗销毁保主窗', async () => {
+  it('lane 会话窗在位→挂起脚本 spawn→pid 存活；shutdownNow 全序恰五步（T5-12a 四步→五步：net.dispose）＋pid DEAD＋lane 窗销毁保主窗', async () => {
     // 0) 真 run 行（生产 flowIdOfRun=runs DAO 直查——会话须在 run 建立后，RUN-NOT-FOUND 透传语义）
     const storage = storageOverChannel();
     const flow = await storage.invoke('flows.create', { name: '退出序冒烟' });
@@ -260,11 +264,14 @@ describe('T4-20 组收尾一：退出全序（killTree＋销毁 lane 窗＋WAL c
     expect(typeof pid).toBe('number');
     expect((await head.control<{ alive: boolean }>('pidAlive', { pid })).alive).toBe(true);
 
-    // 3) 退出全序（AppRuntime.shutdown——before-quit 同方法）：恰四步恰序
+    // 3) 退出全序（AppRuntime.shutdown——before-quit 同方法）：恰五步恰序
+    //    （T5-12a 改动留痕：四步→五步——net.dispose 插 sandbox.dispose 后、
+    //    cdp.destroyAllLaneWindows 前，PM 缺省②）
     const { steps } = await head.control<{ steps: string[] }>('shutdownNow');
-    expect(steps.slice(-4)).toEqual([
+    expect(steps.slice(-5)).toEqual([
       'cron.stop', // 刷 lastAliveAt
       'sandbox.dispose', // 在跑树 killTree＋复查
+      'net.dispose', // NetProxyBridge closeAll（T5-12a）
       'cdp.destroyAllLaneWindows', // 销毁 lane 窗（保主窗——S-3 坑②）
       'storage.close', // WAL checkpoint
     ]);

@@ -275,10 +275,13 @@ function resolveEntry(name, version) {
       license = typeof meta.license === 'string' ? meta.license : known.license ?? 'UNKNOWN';
       holder = meta.author?.name ?? known.holder ?? name;
       repo = typeof meta.repository === 'string' ? meta.repository : meta.repository?.url ?? known.repo ?? '';
-      // LICENSE 文件（LICENSE / LICENSE.md / LICENSE.txt，大小写容错取第一个命中）
+      // LICENSE 文件（LICENSE / LICENSE.md / LICENSE.markdown / LICENSE.txt，大小写容错取第一个命中；
+      // LICENSE.markdown=T5-06 增补——jszip 3.10.2 官方 LICENSE 文件名，双许可 MIT|GPLv3 全文随附）
       const dir = path.dirname(installedPkgJson);
       const licenseFile = existsSync(dir)
-        ? (['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'COPYING'].find((f) => existsSync(path.join(dir, f))) ?? null)
+        ? (['LICENSE', 'LICENSE.md', 'LICENSE.markdown', 'LICENSE.txt', 'LICENCE', 'COPYING'].find((f) =>
+            existsSync(path.join(dir, f)),
+          ) ?? null)
         : null;
       if (licenseFile) text = readFileSync(path.join(dir, licenseFile), 'utf8').trim();
       source = 'node_modules 安装态';

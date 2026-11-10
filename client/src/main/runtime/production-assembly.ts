@@ -8,11 +8,13 @@
 //     C-06 main 内直调（lanes 台账=dao.lanes〔lanes-ledger 结构匹配直传〕、flowIdOfRun=runs DAO）；
 //   - CronScheduler：settings KV=dao 适配（lastAliveAt 三写点）＋cron:fired→IpcGateway.send；
 //   - SandboxExecutor：sandbox/node-types 根=userData 子目录＋vault.reveal 注密＋settings 'ai'
-//     LLM 值源（V1.0 单配置直读）＋CDP lane 端点解析；run:* 通道在此挂载（slot 无 init——
-//     SecretVault/Cdp 先例外，SandboxExecutor 通道面=装配期即挂）。
-//
-// NetProxyBridge 未装配（协调方裁决 2026-11-10：立 P5 补录卡 T5-12）——netEndpointOf 不注入
-// ＝不注入 CONSTELLA_NET_WS（T4-16 冻结缺省：ctx.net=未绑定 stub→SDK_CAP_UNAVAILABLE）。
+//     LLM 值源（V1.0 单配置直读）＋CDP lane 端点解析＋NET 端点解析（T5-12a）；run:* 通道在此
+//     挂载（slot 无 init——SecretVault/Cdp 先例外，SandboxExecutor 通道面=装配期即挂）；
+//   - NetProxyBridge（T5-12a 装配）：ctx.net 的 main 网络代理宿主——net 段 9321–9420 独立池＋
+//     netEndpointOf=N1 类目门（scriptPath→type→定义类目含「网络」→openScope provision 首开
+//     〔V1.0 缺省 allowlist ['*']，PM 缺省①〕）；全序织入=cdp slot 包装（启动 net.init=cdp.init
+//     后主窗前／退出 net.dispose=sandbox.dispose 后 destroyAllLaneWindows 前，PM 缺省②——
+//     AppRuntime 无 net 调用点，T5-12a 领地不含 app-runtime.ts，观察面位次等价）。
 //
 // onStep：生命周期步骤记录（冒烟「启动/退出全序」断言面——AppRuntime 调序经 slot 包装透出）。
 import path from 'node:path';
@@ -20,6 +22,7 @@ import { IPC_CHANNELS } from '@constella/shared/ipc';
 import type { AiSettings } from '@constella/shared/settings';
 import { CdpBridge, CdpPortPool, CdpSessionManager, type CdpBrowserWindowConstructor } from '../cdp';
 import { CronScheduler, registerCronChannels, type CronFlowSource } from '../cron';
+import { NetProxyBridge, netEligibleDefinition } from '../net';
 import { SandboxExecutor, type SdkModulePaths } from '../sandbox';
 import { SQLITE_ENGINE } from '../storage/engine/sqlite-engine';
 import { StorageService, type ZipExportPipeline, type ZipImportPipeline } from '../storage-bridge';
@@ -80,6 +83,8 @@ export interface ProductionAssembly {
   cdp: CdpSessionManager;
   sandbox: SandboxExecutor;
   bridge: CdpBridge;
+  /** NetProxyBridge（T5-12a）：net 段桥宿主——denials() 台账查询面（provision/端点管理=组件面） */
+  net: NetProxyBridge;
 }
 
 /** 五服务真装配＋AppRuntime 组合（单一来源：index.ts 与头跑冒烟共用） */
@@ -165,6 +170,9 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
       nodes: storage.layer.dao.flows.get(f.id).nodes.map((n) => ({ type: n.type, params: n.params })),
     }));
 
+  // ———— NetProxyBridge（T5-12a；生命周期全序织入位=下方 services.cdp 包装——文件头注记）————
+  const net = new NetProxyBridge(); // createWssServer 缺省（loopback-only＋禁 deflate）；缺省 net 段 9321–9420
+
   // ———— SandboxExecutor（步骤 9 sweepOrphans／退出序 dispose；run:* 通道装配期挂载）————
   const sandbox = new SandboxExecutor({
     sandboxRoot: path.join(deps.userDataDir, 'sandbox'),
@@ -182,7 +190,23 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
       return { baseUrl: ai?.baseUrl ?? '', apiKeyRef: ai?.apiKeyRef ?? null };
     },
     cdpEndpointOf: (laneKey) => bridge.endpointOf(laneKey), // CONSTELLA_CDP_WS 条件注入（T0-06）
-    // netEndpointOf：NetProxyBridge 未装配（T5-12 P5 补录卡）——不注入＝不注入 CONSTELLA_NET_WS
+    // CONSTELLA_NET_WS 条件注入（T5-12a 兑现 T4-16 注入缝）：N1 类目门（PM 缺省①锚冻结）——
+    // scriptPath→type→定义类目含「网络」（definitions DAO main 内直调，§2）→ openScope provision
+    // 首开（V1.0 缺省 allowlist ['*']；V1.1 收缩位=NetProxyBridge.provision 执行点已留）；
+    // 门不开=null（不注入 NET_WS——ctx.net=未绑定 stub）。openScope 为 async（绑定确认先于
+    // env 注入——sandbox-executor seam 微调面，T5-12a 报告留痕）。
+    netEndpointOf: (req) => {
+      if (
+        netEligibleDefinition(
+          req.scriptPath,
+          path.join(deps.userDataDir, 'node-types'),
+          storage.layer.dao.definitions.loadAll(),
+        ) === undefined
+      ) {
+        return null;
+      }
+      return net.openScope(req.nodeRunId); // run/node 作用域（scope key=nodeRunId）
+    },
   });
   sandbox.init({
     registry: runtime.ipc,
@@ -190,6 +214,19 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
   });
 
   // ———— 五服务注入位（生命周期步骤记录包装——冒烟「启动/退出全序」断言面）————
+  // net 槽（T5-12a）：AppRuntime 无 net 调用点（本卡领地不含 app-runtime.ts）——生命周期经
+  // services.cdp slot 包装驱动（下方织入位），net 槽为实名注入位（PM 缺省②全序位次：
+  // 启动=cdp.init 后、主窗加载 renderer 前；退出=sandbox.dispose 后、cdp.destroyAllLaneWindows 前）。
+  const netSlot = {
+    init: async (): Promise<void> => {
+      step('net.init');
+      await net.init(); // net 段 PortPool 预热（全段探活——cdp.init 同形）
+    },
+    dispose: async (): Promise<void> => {
+      step('net.dispose');
+      await net.dispose(); // closeAll（关全部 scope 端点＋还池）
+    },
+  };
   const services: MainServiceSlots = {
     storage: {
       init: async (options) => {
@@ -211,13 +248,20 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
       init: async (options) => {
         step('cdp.init');
         await cdp.init(options);
+        // net.init 织入位（T5-12a / PM 缺省②：cdp.init 后、主窗加载 renderer 前——
+        // AppRuntime startup 的 cdp.init 与 createMainWindow 之间）
+        await netSlot.init();
       },
       destroyAllLaneWindows: async () => {
+        // net.dispose 织入位（T5-12a / PM 缺省②：sandbox.dispose 后、cdp.destroyAllLaneWindows 前
+        // ——AppRuntime shutdown 的 sandbox.dispose 与本步之间）
+        await netSlot.dispose();
         step('cdp.destroyAllLaneWindows');
         await cdp.destroyAllLaneWindows();
       },
       laneMemory: () => cdp.laneMemory(),
     },
+    net: netSlot,
     cron: {
       start: async () => {
         step('cron.start');
@@ -241,5 +285,5 @@ export function assembleProductionRuntime(deps: ProductionAssemblyDeps): Product
   };
 
   slots = services; // 惰性槽位就位（AppRuntime startup/shutdown 消费点在装配返回后）
-  return { runtime, services, storage, vault, cron, cdp, sandbox, bridge };
+  return { runtime, services, storage, vault, cron, cdp, sandbox, bridge, net };
 }

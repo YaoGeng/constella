@@ -5,10 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- T0-07 会签核对项（T3-01 落位）：connect-src 放行 ws://127.0.0.1（不带端口段=全端口，
          覆盖 NetProxyBridge 9321-9420 与 lane 桥动态端口；app:// 为 standard+secure 特权协议，
-         'self' 即 app:// 源）。style 'unsafe-inline'=React 内联样式；script 'self'=vite 外部产物。 -->
+         'self' 即 app:// 源）。style 'unsafe-inline'=React 内联样式；script 'self'=vite 外部产物。
+         T5-01 登记项（02 §12.3「connect-src … <用户 LLM baseUrl 域>」——LlmGateway/C-09 之外的
+         renderer HTTP 出口为零）：LLM baseUrl 为运行期用户自配（settings 'ai'/C-18 profile），
+         构建期无法收敛成具体 host 列表，取最小 scheme 放行 https:（本地明文端点 http: 不放行）。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1 https:"
     />
     <title>Constella</title>
   </head>

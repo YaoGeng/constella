@@ -24,14 +24,17 @@ from .caps import (
     LlmMessage,
     LlmTextPart,
     NetCap,
+    NetFetchResponse,
     SdkCapUnavailableError,
     VaultCap,
     unbound_cap,
 )
+from .net import DEFAULT_NET_FETCH_TIMEOUT_MS, SdkNetError, make_net_cap
 
 __version__ = "0.1.0"  # 与 ts 侧 sdk/package.json version 恒等（T4-12 断言）
 
 __all__ = [
+    "DEFAULT_NET_FETCH_TIMEOUT_MS",
     "AgentCap",
     "BrowserCap",
     "FileCap",
@@ -43,13 +46,16 @@ __all__ = [
     "LlmMessage",
     "LlmTextPart",
     "NetCap",
+    "NetFetchResponse",
     "NodeCtx",
     "NodeOut",
     "NodeOutBranch",
     "NodeOutData",
     "SdkCapUnavailableError",
+    "SdkNetError",
     "VaultCap",
     "__version__",
+    "make_net_cap",
     "run",
     "unbound_cap",
 ]
