@@ -2,10 +2,16 @@
 // T4-20 seam（storage-bridge/zip-channels ZipExportPipeline；production-assembly 经
 // deps.zipExportPipeline 条件传入）。
 //
-// 两变体（02 §3.4 v1.0b 勘误）：
+// 盘双变体（02 §3.4 v1.0b 勘误）：
 //   - 流程导出 `{flowId,savePath}` → main 组装四件套→store 档写盘→`{file,count,scripts}`；
 //   - 发布打包 `{types[],savePath,meta}` → 勾选类型集四件套＋SHA-256（幂等键——C-09 Publisher
 //     消费）→`{filePath,checksum}`。
+//
+// 字节双变体（✅ 02 v1.0f 勘误〔2026-11-10 PM 裁决，T5-11〕——发布上传链 multipart 免文件
+// 读回；renderer 无 fs 读面，与 v1.0e import 字节变体对称；**不写盘**）：
+//   - 流程字节 `{flowId}` → **nodes/*.json BFS 拓扑序**物化＝「FlowSteps 序列化」语义
+//     （01 A-13.2；安装端 T5-10 已按此形冻结——不上传裸 steps JSON）→`{bytes,count,scripts,checksum}`；
+//   - 发布字节 `{types[],meta}` → 勾选类型集四件套（与盘变体同装配）→`{bytes,count,scripts,checksum}`。
 //
 // 四件套（01 A-4.03；demo L2573-2602 参照非权威）：manifest.json（X-01 PackageManifest 源型：
 // kind/name/version/scripts 映射）＋nodes/*.json＋scripts/*.py|*.ts（自注册资产目录取——
@@ -25,7 +31,13 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { IPC_ERROR_CODES, type FlowDoc, type ZipExportReq, type ZipExportRes } from '@constella/shared/ipc';
+import {
+  IPC_ERROR_CODES,
+  type FlowDoc,
+  type ZipExportBytesRes,
+  type ZipExportReq,
+  type ZipExportRes,
+} from '@constella/shared/ipc';
 import type { NodeDefinition } from '@constella/shared/dsl';
 import type { PackageManifest, ScriptRef } from '@constella/shared/manifest';
 import { ZipError, type ZipExportPipeline } from '../storage-bridge/zip-channels';
@@ -127,39 +139,117 @@ async function collectTypeAssets(
 export function createZipExportPipeline(deps: ZipExportPipelineDeps): ZipExportPipeline {
   const writer = createZipWriter();
   return async (req: ZipExportReq): Promise<ZipExportRes> => {
-    if ('flowId' in req) return exportFlowVariant(deps, writer, req);
-    return exportPublishVariant(deps, writer, req);
+    if ('flowId' in req) {
+      return 'savePath' in req
+        ? exportFlowVariant(deps, writer, req) // 盘变体（v1.0b 原形不变）
+        : exportFlowBytesVariant(deps, writer, req); // 字节变体（v1.0f——BFS 拓扑序）
+    }
+    return 'savePath' in req
+      ? exportPublishVariant(deps, writer, req) // 盘变体（v1.0b 原形不变）
+      : exportPublishBytesVariant(deps, writer, req); // 字节变体（v1.0f——同装配不写盘）
   };
 }
 
-/** 流程导出变体：{flowId,savePath} → {file,count,scripts} */
+/** 流程导出变体：{flowId,savePath} → {file,count,scripts}（v1.0b 盘变体——存储序原形） */
 async function exportFlowVariant(
   deps: ZipExportPipelineDeps,
   writer: ReturnType<typeof createZipWriter>,
   req: { flowId: string; savePath: string },
 ): Promise<{ file: string; count: number; scripts: ScriptRef[] }> {
-  const flow = deps.getFlow(req.flowId);
+  const flow = requireFlow(deps, req.flowId);
+  const { files, scriptRefs } = await assembleFlow(deps, flow, flow.nodes);
+  await writer.write(files, req.savePath, { date: ZIP_EPOCH });
+  deps.log?.(`[zip] exportFlow ${flow.name}（${flow.nodes.length} 节点）→ ${req.savePath}`);
+  return { file: req.savePath, count: flow.nodes.length, scripts: scriptRefs };
+}
+
+/** 流程字节变体：{flowId} → {bytes,count,scripts,checksum}（v1.0f——BFS 拓扑序＝FlowSteps
+ * 序列化语义的物化形；不写盘；checksum=SHA-256 幂等键） */
+async function exportFlowBytesVariant(
+  deps: ZipExportPipelineDeps,
+  writer: ReturnType<typeof createZipWriter>,
+  req: { flowId: string },
+): Promise<ZipExportBytesRes> {
+  const flow = requireFlow(deps, req.flowId);
+  const ordered = bfsOrder(flow);
+  const { files, scriptRefs } = await assembleFlow(deps, flow, ordered);
+  const { bytes } = await writer.build(files, { date: ZIP_EPOCH });
+  const checksum = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  deps.log?.(`[zip] exportFlowBytes ${flow.name}（BFS 序 ${ordered.length} 节点）→ ${bytes.byteLength}B`);
+  return { bytes: new Uint8Array(bytes), count: ordered.length, scripts: scriptRefs, checksum };
+}
+
+/** 流程读取＋空拒绝（盘/字节两变体共用前置） */
+function requireFlow(deps: ZipExportPipelineDeps, flowId: string): FlowDoc {
+  const flow = deps.getFlow(flowId);
   if (flow === undefined) {
-    throw new ZipError(IPC_ERROR_CODES.ZIP_FLOW_NOT_FOUND, `流程不存在：${req.flowId}`);
+    throw new ZipError(IPC_ERROR_CODES.ZIP_FLOW_NOT_FOUND, `流程不存在：${flowId}`);
   }
   if (flow.nodes.length === 0) {
     // renderer ExportOrchestrator 首道拒绝（demo L2575 文案）；main 侧兜底同文案
     throw new ZipError(IPC_ERROR_CODES.ZIP_WRITE_FAILED, '当前流程没有节点可导出');
   }
+  return flow;
+}
 
+/** BFS 拓扑序（✅ v1.0f：FlowSteps 序列化语义物化——demo L2947-2955 同构：根=无入边节点，
+ *  沿边 BFS，未达节点按存储序追加〔环/孤岛防御〕） */
+function bfsOrder(flow: FlowDoc): FlowDoc['nodes'] {
+  const hasIncoming = new Set(flow.edges.map((e) => e.to[0]));
+  const byId = new Map(flow.nodes.map((n) => [n.id, n]));
+  const seen = new Set<string>();
+  const queue: string[] = [];
+  for (const n of flow.nodes) {
+    if (!hasIncoming.has(n.id)) {
+      seen.add(n.id);
+      queue.push(n.id);
+    }
+  }
+  const order: FlowDoc['nodes'] = [];
+  for (let i = 0; i < queue.length; i++) {
+    const cur = queue[i]!;
+    const node = byId.get(cur);
+    if (node !== undefined) order.push(node);
+    for (const e of flow.edges) {
+      if (e.from[0] === cur && !seen.has(e.to[0])) {
+        seen.add(e.to[0]);
+        queue.push(e.to[0]);
+      }
+    }
+  }
+  for (const n of flow.nodes) {
+    // 环/不可达节点按存储序追加（demo Object.values 兜底段同构）
+    if (!seen.has(n.id)) {
+      seen.add(n.id);
+      order.push(n);
+    }
+  }
+  return order;
+}
+
+/** 流程四件套组装（盘/字节变体共用——ordered=节点迭代序） */
+async function assembleFlow(
+  deps: ZipExportPipelineDeps,
+  flow: FlowDoc,
+  ordered: FlowDoc['nodes'],
+): Promise<{ files: ZipFileInput[]; scriptRefs: ScriptRef[] }> {
   const files: ZipFileInput[] = [];
   const scriptRefs: ScriptRef[] = [];
   const scriptsMap: Record<string, ScriptRef> = {};
   const doneTypes = new Set<string>();
   const usedStems = new Map<string, number>();
 
-  for (const node of flow.nodes) {
+  for (const node of ordered) {
     const def = deps.getDefinition(node.type);
     const entry: Record<string, unknown> = {
       type: node.type,
       name: node.name,
       position: node.position,
       params: stripSecretParams(node.params, def), // X-20：secret 整键剔除
+      // 顶层类目面（S-02 ManifestGuard perms 推导对端——nodes/*.json lenient 形 {type,kind,meta.category}；
+      // §6.8 E2E 收口发现的 C-08↔S-02 形 gap：server 只读顶层 meta.category，嵌 definition 不展开）
+      kind: def?.kind ?? 'custom',
+      ...(def !== undefined ? { meta: { name: def.meta.name, icon: def.meta.icon, category: def.meta.category } } : {}),
     };
     if (def?.kind === 'custom') entry.definition = def; // 自定义定义随包（含 paramsSchema=「仅保 schema 声明」载体）
     files.push({
@@ -172,9 +262,7 @@ async function exportFlowVariant(
 
   appendDepsFiles(files, scriptRefs);
   files.unshift({ name: 'manifest.json', data: manifestJson({ kind: 'flow', name: flow.name, scriptsMap }) });
-  await writer.write(files, req.savePath, { date: ZIP_EPOCH });
-  deps.log?.(`[zip] exportFlow ${flow.name}（${flow.nodes.length} 节点）→ ${req.savePath}`);
-  return { file: req.savePath, count: flow.nodes.length, scripts: scriptRefs };
+  return { files, scriptRefs };
 }
 
 /** 发布打包变体：{types[],savePath,meta} → {filePath,checksum}（SHA-256 幂等键） */
@@ -183,7 +271,33 @@ async function exportPublishVariant(
   writer: ReturnType<typeof createZipWriter>,
   req: { types: string[]; savePath: string; meta: { name: string } },
 ): Promise<{ filePath: string; checksum: string }> {
-  if (req.types.length === 0) {
+  const { files } = await assemblePublish(deps, req.types, req.meta);
+  const { bytes } = await writer.write(files, req.savePath, { date: ZIP_EPOCH });
+  const checksum = createHash('sha256').update(bytes).digest('hex');
+  deps.log?.(`[zip] exportPackage ${req.meta.name}（${req.types.length} 类型）→ ${req.savePath}`);
+  return { filePath: req.savePath, checksum };
+}
+
+/** 发布字节变体：{types[],meta} → {bytes,count,scripts,checksum}（v1.0f——同装配不写盘） */
+async function exportPublishBytesVariant(
+  deps: ZipExportPipelineDeps,
+  writer: ReturnType<typeof createZipWriter>,
+  req: { types: string[]; meta: { name: string } },
+): Promise<ZipExportBytesRes> {
+  const { files, scriptRefs } = await assemblePublish(deps, req.types, req.meta);
+  const { bytes } = await writer.build(files, { date: ZIP_EPOCH });
+  const checksum = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  deps.log?.(`[zip] exportPackageBytes ${req.meta.name}（${req.types.length} 类型）→ ${bytes.byteLength}B`);
+  return { bytes: new Uint8Array(bytes), count: req.types.length, scripts: scriptRefs, checksum };
+}
+
+/** 发布四件套组装（盘/字节变体共用） */
+async function assemblePublish(
+  deps: ZipExportPipelineDeps,
+  types: readonly string[],
+  meta: { name: string },
+): Promise<{ files: ZipFileInput[]; scriptRefs: ScriptRef[] }> {
+  if (types.length === 0) {
     throw new ZipError(IPC_ERROR_CODES.ZIP_WRITE_FAILED, '未勾选任何节点类型——发布打包需至少一个类型');
   }
   const files: ZipFileInput[] = [];
@@ -192,25 +306,29 @@ async function exportPublishVariant(
   const doneTypes = new Set<string>();
   const usedStems = new Map<string, number>();
 
-  for (const type of req.types) {
+  for (const type of types) {
     const def = deps.getDefinition(type);
     if (def === undefined) {
       throw new ZipError(IPC_ERROR_CODES.ZIP_WRITE_FAILED, `未知节点类型：${type}（发布打包需类型已在定义库）`);
     }
-    // 发布物自包含：定义一律随包（导入侧 definitions.upsert 输入——C-08 §3 AssetInstaller）
-    const entry = { type, name: def.meta.name, definition: def };
+    // 发布物自包含：定义一律随包（导入侧 definitions.upsert 输入——C-08 §3 AssetInstaller）；
+    // 顶层 kind/meta 类目面＝S-02 ManifestGuard perms 推导对端（builtin 顶层标记→不计权限）
+    const entry = {
+      type,
+      name: def.meta.name,
+      kind: def.kind,
+      meta: { name: def.meta.name, icon: def.meta.icon, category: def.meta.category },
+      definition: def,
+    };
     files.push({ name: `nodes/${uniqueStem(safeStem(def.meta.name), usedStems)}.json`, data: JSON.stringify(entry, null, 2) });
     const ref = await collectTypeAssets(deps, def, doneTypes, files, scriptRefs);
     if (ref !== undefined) scriptsMap[type] = ref; // 发布变体映射键=类型（包无实例——T5-07 消费注记）
   }
 
   appendDepsFiles(files, scriptRefs);
-  const kind = req.types.length === 1 ? 'node' : 'pack'; // X-01：node 单类型 / pack 节点集
-  files.unshift({ name: 'manifest.json', data: manifestJson({ kind, name: req.meta.name, scriptsMap }) });
-  const { bytes } = await writer.write(files, req.savePath, { date: ZIP_EPOCH });
-  const checksum = createHash('sha256').update(bytes).digest('hex');
-  deps.log?.(`[zip] exportPackage ${req.meta.name}（${req.types.length} 类型）→ ${req.savePath}`);
-  return { filePath: req.savePath, checksum };
+  const kind = types.length === 1 ? 'node' : 'pack'; // X-01：node 单类型 / pack 节点集
+  files.unshift({ name: 'manifest.json', data: manifestJson({ kind, name: meta.name, scriptsMap }) });
+  return { files, scriptRefs };
 }
 
 /** deps 按语言（demo L2591-2592：python→requirements.txt、ts→package.json） */

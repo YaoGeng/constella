@@ -33,6 +33,9 @@ export interface MarketBrowserProps {
   onClose(): void;
   /** 页大小（默认 20=server listQuerySchema 默认对端） */
   pageSize?: number;
+  /** 离线降级态（T5-11 OfflineDegradation 装配位注入）：true→广场 pill「离线」＋下载/安装置灰
+   *  （01 §8.3 断网-广场行）；浏览照常（缓存列表只读投影——use-market-list error.last 数据位） */
+  offline?: boolean;
 }
 
 type MarketTab = 'node' | 'flow';
@@ -57,7 +60,7 @@ function authErrorMessage(err: unknown): string {
   return '登录失败，请重试';
 }
 
-export function MarketBrowser({ listFace, auth, onDownload, onClose, pageSize = 20 }: MarketBrowserProps) {
+export function MarketBrowser({ listFace, auth, onDownload, onClose, pageSize = 20, offline = false }: MarketBrowserProps) {
   const [tab, setTab] = useState<MarketTab>('node');
   const search = useMarketSearch();
   const sortCtl = useMarketSort();
@@ -134,7 +137,18 @@ export function MarketBrowser({ listFace, auth, onDownload, onClose, pageSize = 
         className="flex h-[80vh] w-[960px] max-w-[92vw] flex-col gap-3 rounded-lg border border-[var(--line-2)] bg-[rgba(9,14,28,0.96)] p-4 shadow-2xl"
       >
         <div className="flex items-center justify-between">
-          <b className="text-base font-semibold text-[var(--tx)]">广场</b>
+          <div className="flex items-center gap-2">
+            <b className="text-base font-semibold text-[var(--tx)]">广场</b>
+            {offline && (
+              // B-9 广场 pill 离线态（01 A-1.2 经 02 §1.3——OfflineDegradation 状态源）
+              <span
+                data-browser="offline-pill"
+                className="rounded border border-[rgba(150,110,40,0.6)] bg-[rgba(120,80,20,0.22)] px-1.5 py-0.5 text-[10px] leading-3 text-[#e8c37a]"
+              >
+                离线
+              </span>
+            )}
+          </div>
           <button
             type="button"
             data-browser="close"
@@ -265,10 +279,12 @@ export function MarketBrowser({ listFace, auth, onDownload, onClose, pageSize = 
                   <button
                     type="button"
                     data-card-download
-                    className="shrink-0 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[#04101f] hover:brightness-110"
+                    disabled={offline}
+                    title={offline ? '离线中——安装不可用（01 §8.3）' : undefined}
+                    className="shrink-0 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[#04101f] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => requestDownload(it)}
                   >
-                    {auth.isLoggedIn() ? '下载' : '登录后下载'}
+                    {offline ? '离线' : auth.isLoggedIn() ? '下载' : '登录后下载'}
                   </button>
                 </article>
               ))}

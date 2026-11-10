@@ -31,9 +31,32 @@ export interface ZipExportPublishRes {
   checksum: string;
 }
 
-/** zip:export req/res 联合（通道同面两变体） */
-export type ZipExportReq = ZipExportFlowReq | ZipExportPublishReq;
-export type ZipExportRes = ZipExportFlowRes | ZipExportPublishRes;
+/** 流程导出字节变体（✅ 02 v1.0f 勘误〔2026-11-10 PM 裁决〕：`{flowId}` 无 savePath——
+ * flow 发布产物上传链消费；nodes/*.json BFS 拓扑序＝「FlowSteps 序列化」语义的物化形
+ * （01 A-13.2），不上传裸 steps JSON） */
+export interface ZipExportFlowBytesReq {
+  flowId: string;
+}
+
+/** 发布打包字节变体（✅ 02 v1.0f 同源：`{types[],meta}` 无 savePath——multipart 免文件读回
+ * 〔renderer 无 fs 读面，与 v1.0e import 字节变体对称〕） */
+export interface ZipExportPublishBytesReq {
+  types: string[];
+  meta: { name: string };
+}
+
+/** 字节变体统一响应（v1.0f 冻结形）：产物字节＋节点数＋脚本清单＋SHA-256（幂等键） */
+export interface ZipExportBytesRes {
+  bytes: Uint8Array;
+  count: number;
+  scripts: ScriptRef[];
+  checksum: string;
+}
+
+/** zip:export req/res 联合（通道同面；✅ v1.0f：盘双变体＋字节双变体=四变体——
+ * **通道名/通道数不变**（check-ipc-surface 面不受影响）） */
+export type ZipExportReq = ZipExportFlowReq | ZipExportPublishReq | ZipExportFlowBytesReq | ZipExportPublishBytesReq;
+export type ZipExportRes = ZipExportFlowRes | ZipExportPublishRes | ZipExportBytesRes;
 
 // ———— zip:import（两段式：inspect → confirm 回调（renderer 侧）→ commit；02 v1.0b）————
 

@@ -52,8 +52,16 @@ export interface FlowInstallResult {
 }
 
 export interface FlowInstaller {
-  /** §3 冻结组件级接口：installFlow(steps, name)——脏闸→回放→瀑布→flows.create→切换 */
-  installFlow(steps: FlowSteps, name: string): Promise<FlowInstallResult>;
+  /** §3 冻结组件级接口：installFlow(steps, name)——脏闸→回放→瀑布→flows.create→切换；
+   *  opts=noScript 回标（✅ T5-11 卡内冻结形 ⚠〔batch-3 硬接线 3——T5-10 🟡1〕：可选第三参，
+   *  不破坏 §3 冻结签名形；summary.noScript 名单→实例 noScript 标记——落画布＋随 doc 持久化） */
+  installFlow(steps: FlowSteps, name: string, opts?: InstallFlowOpts): Promise<FlowInstallResult>;
+}
+
+/** installFlow 第三参（noScript 回标——Installer 持 summary.noScript 切换后回标实例） */
+export interface InstallFlowOpts {
+  /** 缺 scripts/ 资产的节点**名**单（ImportSummary.noScript——运行闸 02 §8.4 预警数据源） */
+  noScriptNames?: readonly string[];
 }
 
 let nodeSeq = 0;
@@ -68,7 +76,7 @@ function newFlowEdgeId(): string {
 export function createFlowInstaller(deps: FlowInstallerDeps): FlowInstaller {
   const placer = createWaterfallPlacer({ viewportCenter: deps.viewportCenter });
   return {
-    async installFlow(steps, name) {
+    async installFlow(steps, name, opts) {
       // ———— ① 脏闸前置（demo L3066：dirty→先保存或取消）————
       if (!deps.canvasSink.guardDirty('market:installFlow')) {
         deps.notify?.('err', '有未保存改动 — 先保存或取消');
@@ -82,7 +90,9 @@ export function createFlowInstaller(deps: FlowInstallerDeps): FlowInstaller {
       }
 
       // ———— ② FlowSteps 回放：steps→nodes＋显式 edges（BFS 拓扑序线性链 i→i+1，
-      //     端口 out/in——demo genFlow L2185 同构）＋WaterfallPlacer 坐标 ————
+      //     端口 out/in——demo genFlow L2185 同构）＋WaterfallPlacer 坐标＋noScript 回标
+      //     （opts.noScriptNames——Installer 持 summary.noScript，随创建回标实例而非事后补丁）————
+      const noScriptNames = new Set(opts?.noScriptNames ?? []);
       const positions = placer.positions(steps.length);
       const nodes: FlowNode[] = steps.map((s, i) => ({
         id: newFlowNodeId(s[0]),
@@ -90,6 +100,7 @@ export function createFlowInstaller(deps: FlowInstallerDeps): FlowInstaller {
         name: s[1],
         position: positions[i]!,
         params: { ...s[2] },
+        ...(noScriptNames.has(s[1]) ? { noScript: true } : {}), // 02 §8.4 运行闸预警标记
       }));
       const edges: FlowEdge[] = [];
       for (let i = 1; i < nodes.length; i++) {

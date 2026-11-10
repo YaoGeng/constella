@@ -55,9 +55,9 @@ export interface InstallerImporterFace {
   commitBytes(bytes: Uint8Array, token: string, defs?: ReadonlyArray<NodeDefinition>): Promise<ImportResult>;
 }
 
-/** FlowInstaller 注入面（§3 组件级接口 installFlow） */
+/** FlowInstaller 注入面（§3 组件级接口 installFlow＋opts=noScript 回标〔T5-11 卡内冻结形〕） */
 export interface InstallerFlowFace {
-  installFlow(steps: FlowSteps, name: string): Promise<FlowInstallResult>;
+  installFlow(steps: FlowSteps, name: string, opts?: { noScriptNames?: readonly string[] }): Promise<FlowInstallResult>;
 }
 
 export interface InstallerDeps {
@@ -147,7 +147,9 @@ export function createInstaller(deps: InstallerDeps): Installer {
             typeof n?.name === 'string' && n.name !== '' ? n.name : String(n?.type ?? ''),
             { ...(n?.params ?? {}) },
           ]);
-          const flow = await deps.flowInstaller.installFlow(steps, detail.name);
+          // noScript 回标（T5-10 🟡1→T5-11 硬接线 3）：Installer 持 summary.noScript——经
+          // installFlow opts 随创建回标实例（卡内冻结形 ⚠——store patch 之外的可选路径）
+          const flow = await deps.flowInstaller.installFlow(steps, detail.name, { noScriptNames: summary.noScript });
           result = { kind: 'flow', nodeCount: flow.nodeCount, edgeCount: flow.edgeCount, flowId: flow.flowId };
         } else {
           // node/pack：bytes 直入导入链全链（框2 confirm 注入=同一 InstallConfirm；node 单条

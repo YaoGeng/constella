@@ -172,10 +172,13 @@ describe('§6.5e zip:* 装配位骨架（错误序列化归本卡；管线本体
     const gateway = new IpcGateway({ ipcMain: loop.ipcMain });
     registerZipChannels(
       {
+        // ✅ v1.0f（T5-11）：zip:export 四变体——盘双变体（savePath）＋字节双变体（无 savePath）
         export: (req) =>
-          'types' in req
+          'savePath' in req && 'types' in req
             ? { filePath: `${req.meta.name}.zip`, checksum: 'sha256:x' }
-            : { file: req.savePath, count: 1, scripts: [] },
+            : 'savePath' in req
+              ? { file: req.savePath, count: 1, scripts: [] }
+              : { bytes: new Uint8Array([1]), count: 1, scripts: [], checksum: 'sha256:x' },
         import: (req) =>
           req.phase === 'inspect'
             ? { nodes: [], noScript: [], categories: [], manifest: {} as never, token: 't' }

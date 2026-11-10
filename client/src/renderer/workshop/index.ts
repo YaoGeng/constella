@@ -106,3 +106,42 @@ export type {
   MaterializeResult,
   PlanLayoutFn,
 } from './flow-materializer';
+
+// T5-03：store 档组装器（03 L1101 v1.0e 对齐注——零三方 zip 库依赖；demo buildZip L2502-2517 同构）
+export { assembleNodePackage, buildStoreZip, DRAFT_ZIP_EPOCH } from './draft-zip-builder';
+export type {
+  AssembledNodePackage,
+  DraftZipFile,
+  NodePackageFileEntry,
+  NodePackageParts,
+  NodePackageScript,
+} from './draft-zip-builder';
+
+// T5-03：现场开发（§3 NodeDevAgent 行＋§1 六环节 3 段——N1~N8＋scripts＋config＋deps→zip→
+// importArchiveBytes「开发即沉淀」；adoptDraft=确认后「加入画布」；B-5 试跑=adopted 资产直调）
+export { createNodeDevAgent, NodeDevAgentError } from './node-dev-agent';
+export type {
+  AdoptDraftResult,
+  DevelopSpec,
+  DraftDefinitionValidator,
+  DraftImportFace,
+  NodeDevAgent,
+  NodeDevAgentDeps,
+  NodeDevAgentErrorCode,
+  NodeDraft,
+  NodeTrialMeta,
+  TrialRunHandle,
+  TrialRunOpts,
+} from './node-dev-agent';
+
+// T5-05：断点交互卡（§3 HitCardView 行——C-03 推送宿主；T5-11 评审转交 barrel 补全，清单按 T5-05 报告）
+export { HitCardView, resolveHitCard, HIT_MERGE_CANONICAL_KEYS } from './hit-card-view';
+export type {
+  HitCardData,
+  HitCardViewProps,
+  HitResolveAction,
+  HitResolveOutcome,
+  HitResolver,
+  HitResolverDeps,
+  HitResumeDecision,
+} from './hit-card-view';

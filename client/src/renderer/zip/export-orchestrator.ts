@@ -48,6 +48,24 @@ export interface ExportOrchestrator {
   exportFlow(flowId: string): Promise<{ file: string; count: number; scripts: ScriptRef[] }>;
   /** 发布打包变体（§1：勾选节点集→四件套 zip＋SHA-256——C-09 Publisher 消费） */
   exportPackage(types: readonly string[], meta: { name: string }): Promise<{ filePath: string; checksum: string }>;
+  /** ✅ 02 v1.0f（T5-11）：发布打包**字节变体**——不落盘不弹对话框，multipart 免文件读回；
+   * bytes/_checksum（`sha256:<hex>`）＝上传体与幂等键——C-09 Publisher 消费 */
+  exportPackageBytes(
+    types: readonly string[],
+    meta: { name: string },
+  ): Promise<ExportBytesOutcome>;
+  /** ✅ 02 v1.0f（T5-11）：流程导出**字节变体**——BFS 拓扑序物化（FlowSteps 序列化语义，
+   * 安装端 T5-10 已按此形冻结）——flow 发布产物上传链消费 */
+  exportFlowBytes(flowId: string): Promise<ExportBytesOutcome>;
+}
+
+/** 字节变体产物（＝X-01 ZipExportBytesRes 消费面收窄） */
+export interface ExportBytesOutcome {
+  bytes: Uint8Array;
+  count: number;
+  scripts: ScriptRef[];
+  /** zip 内容 SHA-256（`sha256:<hex>` 形——server 幂等键对端） */
+  checksum: string;
 }
 
 export function createExportOrchestrator(
@@ -75,8 +93,24 @@ export function createExportOrchestrator(
       if (types.length === 0) throw new Error('未勾选任何节点类型——发布打包需至少一个类型');
       const savePath = await askSavePath(`constella-${safeFileStem(meta.name)}.zip`);
       const res = await bridge.zipExport({ types: [...types], savePath, meta: { name: meta.name } });
-      if (!('checksum' in res)) throw new Error('zip:export 响应变体不符（打包变体应回 {filePath,checksum}）');
+      // v1.0f 后 checksum 不再是盘/字节判别键（字节变体同带 checksum）——filePath 面
+      if (!('filePath' in res)) throw new Error('zip:export 响应变体不符（打包变体应回 {filePath,checksum}）');
       opts.log?.(`[zip] 已打包「${meta.name}」→ ${res.filePath}（checksum=${res.checksum}）`);
+      return res;
+    },
+
+    async exportPackageBytes(types, meta) {
+      if (types.length === 0) throw new Error('未勾选任何节点类型——发布打包需至少一个类型');
+      const res = await bridge.zipExport({ types: [...types], meta: { name: meta.name } });
+      if (!('bytes' in res)) throw new Error('zip:export 响应变体不符（字节变体应回 {bytes,count,scripts,checksum}）');
+      opts.log?.(`[zip] 已打包「${meta.name}」→ ${res.bytes.byteLength}B（checksum=${res.checksum}）`);
+      return res;
+    },
+
+    async exportFlowBytes(flowId) {
+      const res = await bridge.zipExport({ flowId });
+      if (!('bytes' in res)) throw new Error('zip:export 响应变体不符（字节变体应回 {bytes,count,scripts,checksum}）');
+      opts.log?.(`[zip] 流程字节产物 ${flowId} → ${res.bytes.byteLength}B（BFS 序 ${res.count} 节点）`);
       return res;
     },
   };

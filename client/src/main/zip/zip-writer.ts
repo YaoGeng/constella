@@ -49,6 +49,9 @@ export interface ZipWriterOptions {
 export interface ZipWriter {
   /** 组件级接口（§3 冻结形）：组装→store 档字节→CRC32/伪目录/时间三重自校验→写盘 */
   write(files: readonly ZipFileInput[], savePath: string, opts?: ZipWriterOptions): Promise<ZipWriteResult>;
+  /** 字节产物面（✅ 02 v1.0f〔T5-11〕）：与 write 同构组装＋三重自校验——**不写盘**
+   * （zip:export 字节变体消费；发布上传链 multipart 免文件读回） */
+  build(files: readonly ZipFileInput[], opts?: ZipWriterOptions): Promise<ZipWriteResult>;
 }
 
 const encoder = new TextEncoder();
@@ -119,25 +122,34 @@ export async function verifyZipSelfCheck(
 }
 
 export function createZipWriter(): ZipWriter {
+  /** 组装＋自校验公共段（write/build 共用——S-6 三强制项唯一实现） */
+  async function assemble(files: readonly ZipFileInput[], date: Date): Promise<ZipWriteResult> {
+    const zip = new JSZip();
+    for (const f of files) {
+      // S-6 ②：createFolders:false 必须设在 file() 选项（generateAsync 同名选项实测无效）
+      zip.file(f.name, f.data, { createFolders: false, date });
+    }
+    const bytes = Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
+    // 三重自校验（条目/CRC32/store 档）＋写端 UTC 自洽（central ≡ dosFields(date)——S-6 ①）
+    const entries = await verifyZipSelfCheck(bytes, files);
+    const want = createDosTimeConverter().dosFields(date);
+    for (const e of entries) {
+      if (e.dosTime !== want.time || e.dosDate !== want.date) {
+        throw new Error(`ZipWriter 自校验失败：${e.name} DOS 时间非 UTC 口径（S-6 ①）`);
+      }
+    }
+    return { bytes, entries: entries.length };
+  }
+
   return {
     async write(files, savePath, opts) {
-      const date = opts?.date ?? new Date();
-      const zip = new JSZip();
-      for (const f of files) {
-        // S-6 ②：createFolders:false 必须设在 file() 选项（generateAsync 同名选项实测无效）
-        zip.file(f.name, f.data, { createFolders: false, date });
-      }
-      const bytes = Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
-      // 三重自校验（条目/CRC32/store 档）＋写端 UTC 自洽（central ≡ dosFields(date)——S-6 ①）
-      const entries = await verifyZipSelfCheck(bytes, files);
-      const want = createDosTimeConverter().dosFields(date);
-      for (const e of entries) {
-        if (e.dosTime !== want.time || e.dosDate !== want.date) {
-          throw new Error(`ZipWriter 自校验失败：${e.name} DOS 时间非 UTC 口径（S-6 ①）`);
-        }
-      }
+      const { bytes, entries } = await assemble(files, opts?.date ?? new Date());
       await writeFile(savePath, bytes);
-      return { bytes, entries: entries.length };
+      return { bytes, entries };
+    },
+    async build(files, opts) {
+      // v1.0f 字节面：不落盘（调用方持字节——发布上传链）
+      return assemble(files, opts?.date ?? new Date());
     },
   };
 }

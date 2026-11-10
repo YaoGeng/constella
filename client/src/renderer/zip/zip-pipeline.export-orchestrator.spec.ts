@@ -97,3 +97,41 @@ describe('ExportOrchestrator——变体响应防串（通道联合面）', () =
     await expect(orch.exportFlow('f1')).rejects.toThrow(/zip:export 响应变体不符/);
   });
 });
+
+// ———— ✅ 02 v1.0f 字节双变体（T5-11）：不弹对话框不落盘——发布上传链（C-09 Publisher 消费） ————
+
+describe('ExportOrchestrator——exportPackageBytes / exportFlowBytes（v1.0f 字节变体）', () => {
+  const BYTES_RES: import('@constella/shared/ipc').ZipExportBytesRes = {
+    bytes: new Uint8Array([1, 2, 3]),
+    count: 2,
+    scripts: [],
+    checksum: `sha256:${'a'.repeat(64)}`,
+  };
+
+  it('exportPackageBytes：零对话框；payload={types[],meta}（无 savePath）；产物原样透传', async () => {
+    const bridge = makeBridge({ exportRes: BYTES_RES });
+    const orch = createExportOrchestrator(bridge);
+    await expect(orch.exportPackageBytes([], { name: '空' })).rejects.toThrow('未勾选任何节点类型');
+    expect(bridge.saveFileCalls).toHaveLength(0);
+
+    const res = await orch.exportPackageBytes(['xhs.search'], { name: '单节点包' });
+    expect(bridge.saveFileCalls).toHaveLength(0); // 不弹保存对话框——字节直返
+    expect(bridge.exportCalls).toEqual([{ types: ['xhs.search'], meta: { name: '单节点包' } }]);
+    expect(res).toEqual(BYTES_RES);
+  });
+
+  it('exportFlowBytes：payload={flowId}（无 savePath）；产物原样透传；错形防串', async () => {
+    const bridge = makeBridge({ exportRes: BYTES_RES });
+    const orch = createExportOrchestrator(bridge);
+    const res = await orch.exportFlowBytes('f1');
+    expect(bridge.saveFileCalls).toHaveLength(0);
+    expect(bridge.exportCalls).toEqual([{ flowId: 'f1' }]);
+    expect(res).toEqual(BYTES_RES);
+
+    const bad = makeBridge({ exportRes: { filePath: 'x', checksum: 'y' } });
+    await expect(createExportOrchestrator(bad).exportFlowBytes('f1')).rejects.toThrow(/zip:export 响应变体不符/);
+    await expect(createExportOrchestrator(bad).exportPackageBytes(['t'], { name: 'X' })).rejects.toThrow(
+      /zip:export 响应变体不符/,
+    );
+  });
+});

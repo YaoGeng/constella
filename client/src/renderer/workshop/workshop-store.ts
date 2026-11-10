@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import type { DiffCard } from './confirm-gate';
 import type { FlowPlanner, PlanCard } from './flow-planner';
+import type { NodeDraft } from './node-dev-agent';
 
 /** rail 状态字四态（01 A-10.1：待命/思考中/规划中/并行 N 任务；demo L2456/L2317/L1628） */
 export type RailActivity = 'idle' | 'thinking' | 'planning' | 'parallel';
@@ -24,11 +25,12 @@ export interface RailState {
   parallelCount: number;
 }
 
-/** 对话流卡片挂点（确认闸产物停卡片——A-10.2；草稿卡形随 T5-03 NodeDevAgent 定；
- *  差异卡形=T5-04 ConfirmGate DiffCard——「应用」经 CanvasSink.patchNode N6 字段化） */
+/** 对话流卡片挂点（确认闸产物停卡片——A-10.2；草稿卡=T5-03 NodeDraft〔现场开发产物——
+ *  N1~N8 定义＋zip bytes＋试跑元数据，自带 id〕；差异卡形=T5-04 ConfirmGate DiffCard——
+ *  「应用」经 CanvasSink.patchNode N6 字段化） */
 export type WorkshopCard =
   | { kind: 'plan'; plan: PlanCard }
-  | { kind: 'draft'; draft: unknown }
+  | { kind: 'draft'; draft: NodeDraft }
   | { kind: 'diff'; diff: DiffCard };
 
 export interface WorkshopMessage {

@@ -40,7 +40,10 @@ const vEmptyPayload: PayloadValidator = (input) => (input === undefined ? ok({})
 /** dialog:openFile filters 元素（Electron FileFilter 形，X-01 dialog 域） */
 const vFileFilter = vObject({ name: vOptional(vString({ min: 0 })), extensions: vArray(vString({ min: 0 })) });
 
-/** zip:export 双变体（02 v1.0b：流程导出 {flowId,savePath}｜发布打包 {types[],savePath,meta}） */
+/** zip:export 四变体（02 v1.0b 盘双变体＋✅ v1.0f 字节双变体：
+ * 流程导出 {flowId,savePath}｜发布打包 {types[],savePath,meta}｜
+ * 流程字节 {flowId}｜发布字节 {types[],meta}——无 savePath，发布上传链免文件读回。
+ * vObject 严格未知键拒绝＝变体互斥面：{flowId,savePath} 不落字节变体、{flowId} 不落盘变体） */
 const vZipExport: PayloadValidator = (input) => {
   const flow = vObject({ flowId: vString(), savePath: vString() })(input);
   if (flow.ok) return flow;
@@ -48,9 +51,15 @@ const vZipExport: PayloadValidator = (input) => {
     input,
   );
   if (publish.ok) return publish;
+  const flowBytes = vObject({ flowId: vString() })(input);
+  if (flowBytes.ok) return flowBytes;
+  const publishBytes = vObject({ types: vArray(vString()), meta: vObject({ name: vString() }) })(input);
+  if (publishBytes.ok) return publishBytes;
   return fail([
     ...flow.errors.map((e) => `变体A(流程导出) ${e}`),
     ...publish.errors.map((e) => `变体B(发布打包) ${e}`),
+    ...flowBytes.errors.map((e) => `变体C(流程字节) ${e}`),
+    ...publishBytes.errors.map((e) => `变体D(发布字节) ${e}`),
   ]);
 };
 
