@@ -12,11 +12,18 @@
 //     （ts 链=electron-as-node；py 链=constella_sdk 包源同置，T4-17）。
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import path from 'node:path';
-import { STORAGE_DAO_ERROR_CODES } from '@constella/shared/constants';
+import { BUILTIN_TYPE_IDS, STORAGE_DAO_ERROR_CODES } from '@constella/shared/constants';
 import { assembleProductionRuntime } from './runtime/production-assembly';
 import { adaptElectronDialog, type ElectronApi } from './runtime/electron-api';
 import { StorageError } from './storage/dao/dao-error';
-import { createZipExportPipeline } from './zip';
+import {
+  createAssetInstaller,
+  createPackageParser,
+  createZipExportPipeline,
+  createZipImportPipeline,
+  createZipReader,
+  createZipSecurityValidator,
+} from './zip';
 
 const electronApi: ElectronApi = {
   app,
@@ -31,6 +38,12 @@ const electronApi: ElectronApi = {
 // app 根（dev/electron . = client 包根；打包产物路径随 P6/B1 分发波校准——留痕）
 const appRoot = app.getAppPath();
 const userDataDir = app.getPath('userData');
+
+// 已知节点类型面（T5-07：PackageParser 未知 type 兜底判定输入——内置 12 ∪ definitions DAO；
+// 后向闭包：管线首调用远晚于装配完成，同 T5-06 getFlow/getDefinition 先例）
+const hasKnownNodeType = (t: string): boolean =>
+  (BUILTIN_TYPE_IDS as readonly string[]).includes(t) ||
+  assembly.storage.layer.dao.definitions.loadAll().some((doc) => doc.type === t);
 
 const assembly = assembleProductionRuntime({
   electron: electronApi,
@@ -61,6 +74,25 @@ const assembly = assembleProductionRuntime({
     getDefinition: (type) =>
       assembly.storage.layer.dao.definitions.loadAll().find((doc) => doc.type === type),
     nodeTypesRoot: path.join(userDataDir, 'node-types'),
+  }),
+  // T5-07（C-08 §1 zip:import 两段式行）：导入管线真面注入（T4-20 seam——缺省=stub ZIP-INVALID；
+  // 头跑冒烟宿主同 export 例不传＝stub 退化面继续被 T4-20 冒烟守护）。hasType=内置 12 ∪
+  // definitions DAO（main 内直调——PackageParser 未知 type 兜底判定面）；definitions/
+  // assetPackages=C-06 §2 直调点（commit 段落盘后双 upsert）。
+  zipImportPipeline: createZipImportPipeline({
+    reader: createZipReader(),
+    validator: createZipSecurityValidator(),
+    parser: createPackageParser({ hasType: hasKnownNodeType }),
+    installer: createAssetInstaller({
+      reader: createZipReader(),
+      validator: createZipSecurityValidator(),
+      parser: createPackageParser({ hasType: hasKnownNodeType }),
+      nodeTypesRoot: path.join(userDataDir, 'node-types'),
+      definitions: { upsert: (doc) => assembly.storage.layer.dao.definitions.upsert(doc) },
+      assetPackages: {
+        upsert: (args) => assembly.storage.layer.dao.assetPackages.upsert(args),
+      },
+    }),
   }),
   sdkModules: {
     // monorepo sdk TS 源（T4-16 装配注记：client 无 workspace dep——esbuild alias 显式映射）

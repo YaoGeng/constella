@@ -313,7 +313,9 @@ describe('组件级接口（C-02 §3 四组件行）', () => {
 describe('§6.5 单一来源断言（validateDefinition 出现处 ⊆ 本模块目录＋装配点）', () => {
   // 本 spec 位于 renderer/definition/ → '../' ＝ renderer/（URL 解析先剥文件名，security-baseline 同法算级）
   const RENDERER_ROOT = fileURLToPath(new URL('../', import.meta.url));
-  const ALLOWED_PREFIXES = ['definition/', 'node-registry/'];
+  // 白名单=合法消费方集合（C-02 §2 ↑被依赖）：definition/（本模块）＋node-registry/（C-05 装载）
+  // ＋zip/（T5-07 联动：C-08 导入链 inspect 段逐定义校验——03 C-08 §2 imports ↓ 点名）。
+  const ALLOWED_PREFIXES = ['definition/', 'node-registry/', 'zip/'];
 
   function listTsFiles(dir: string): string[] {
     const out: string[] = [];
@@ -325,7 +327,7 @@ describe('§6.5 单一来源断言（validateDefinition 出现处 ⊆ 本模块�
     return out;
   }
 
-  it('client/src/renderer 内 validateDefinition 只出现于 definition/（本模块）与 node-registry/（C-05 装配点）', () => {
+  it('client/src/renderer 内 validateDefinition 只出现于 definition/（本模块）/node-registry/（C-05 装配点）/zip/（C-08 导入链——T5-07 联动）', () => {
     const hits = listTsFiles(RENDERER_ROOT)
       .map((f) => relative(RENDERER_ROOT, f).split(sep).join('/'))
       .filter((rel) => readFileSync(join(RENDERER_ROOT, rel), 'utf8').includes('validateDefinition'));
