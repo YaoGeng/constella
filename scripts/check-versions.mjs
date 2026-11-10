@@ -37,6 +37,9 @@ const ASSERTIONS = [
   // 「版本锁随 P4 实现卡安装定」；ws=MIT，S-9 复验通过）
   { pkg: './client', dep: 'ws', version: '8.18.2', scope: 'dependencies' },
   { pkg: './client', dep: '@types/ws', version: '8.18.2', scope: 'devDependencies' },
+  // P6 断言面（T0-04 裁定 @lezer/python＝py 语法校验纯 JS parser；PM 预装 2026-11-11——05 P6
+  // 区头开波注②；首消费=T6-08 SyntaxChecker；S-9 复验结论随卡）
+  { pkg: './client', dep: '@lezer/python', version: '1.1.19', scope: 'dependencies' },
 ];
 
 const failures = [];
