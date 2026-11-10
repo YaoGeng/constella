@@ -20,7 +20,7 @@ interface LoginFormValues {
 const CODE_MESSAGES: Record<string, string> = {
   'AUTH-INVALID-CREDENTIALS': '邮箱或密码错误',
   'ADMIN-USER-BANNED': '账号已被封禁',
-  RATE_LIMITED: '尝试过于频繁，请稍后再试',
+  'RATE-LIMITED': '尝试过于频繁，请稍后再试', // X-01 ErrorCode 冻结字面量为 RATE-LIMITED（T6-01 评审 MINOR 修正）
 }
 
 function errorText(err: unknown): string {

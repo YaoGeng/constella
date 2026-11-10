@@ -17,7 +17,7 @@
 // meta.source 固定改写 'manual'（§1 StepMeta 行「source 可编辑态固定 'manual' 写入语义位」
 // ——02 §8.2 upsert 四入口之手动编辑器）；改写不计 dirty（dirty=用户改动，基线=载入态）。
 import { create } from 'zustand';
-import type { NodeDefinition, NodeMeta, NodePorts } from '@constella/shared/dsl';
+import type { IoContract, NodeDefinition, NodeMeta, NodePorts, ParamField, RunPolicy } from '@constella/shared/dsl';
 import { validateDefinition } from '../definition';
 import type { DefRule, FieldError } from '../definition';
 
@@ -176,6 +176,10 @@ export interface DefinitionDraftState {
   /** type 编辑（create 态；edit 态 PK 不可变——A-11.1 同名同型 upsert 对象恒定，防御性 no-op） */
   setType(type: string): void;
   setPorts(ports: NodePorts): void;
+  /** 环节 3 读写面（T6-07 StepSchema）：N3 字段表＋N6/N7 高级声明（null=未声明位——02 §8.6 缺省默认） */
+  setParamsSchema(paramsSchema: ParamField[]): void;
+  setPolicy(policy: RunPolicy | null): void;
+  setIo(io: IoContract | null): void;
   /** 环节跳转（回退自由；前进=逐门校验，未过门不得前进） */
   goToStep(target: EditorStepKey): void;
   nextStep(): void;
@@ -249,6 +253,21 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
   setPorts: (ports) => {
     const s = get();
     set({ draft: { ...s.draft, ports } });
+  },
+
+  setParamsSchema: (paramsSchema) => {
+    const s = get();
+    set({ draft: { ...s.draft, paramsSchema } });
+  },
+
+  setPolicy: (policy) => {
+    const s = get();
+    set({ draft: { ...s.draft, policy } });
+  },
+
+  setIo: (io) => {
+    const s = get();
+    set({ draft: { ...s.draft, io } });
   },
 
   goToStep: (target) => {

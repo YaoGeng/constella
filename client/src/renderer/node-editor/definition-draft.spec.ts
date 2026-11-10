@@ -294,3 +294,24 @@ describe('stepper 结构面', () => {
     expect(EDITOR_STEPS).toEqual<EditorStepKey[]>(['meta', 'ports', 'schema', 'script', 'inner', 'save']);
   });
 });
+
+describe('N3/N6/N7 草稿读写面（T6-07 StepSchema 消费——draft.paramsSchema/policy/io）', () => {
+  it('setParamsSchema/setPolicy/setIo 直写草稿维度；null 归位（高级声明未启用位）；写入即 dirty', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    const st = useDefinitionDraftStore.getState();
+    st.setParamsSchema([{ k: 'keywords', t: 'textarea', validate: { minLines: 1 } }]);
+    st.setPolicy({ timeoutMs: 0, retries: 2 }); // 0=显式有效值（X-4——非缺省默认 30s）
+    st.setIo({ outputs: { out: { fields: [{ name: 'notes', type: 'object[]' }] } } });
+    const d = useDefinitionDraftStore.getState().draft;
+    expect(d.paramsSchema).toEqual([{ k: 'keywords', t: 'textarea', validate: { minLines: 1 } }]);
+    expect(d.policy).toEqual({ timeoutMs: 0, retries: 2 });
+    expect(d.io).toEqual({ outputs: { out: { fields: [{ name: 'notes', type: 'object[]' }] } } });
+    expect(isDirty(useDefinitionDraftStore.getState())).toBe(true);
+
+    useDefinitionDraftStore.getState().setPolicy(null);
+    useDefinitionDraftStore.getState().setIo(null);
+    const cleared = useDefinitionDraftStore.getState().draft;
+    expect(cleared.policy).toBe(null);
+    expect(cleared.io).toBe(null);
+  });
+});

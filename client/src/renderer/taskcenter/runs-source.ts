@@ -9,6 +9,7 @@
 import type { NodeStatus, RunMirror } from '../run';
 import { HeartbeatTicker } from './heartbeat-ticker';
 import { isRunUnfinished, project, type RunRow, type TaskRunRecord } from './run-row';
+import { resolveLocateTarget, type LocateTarget } from './locate-run';
 
 /**
  * C-03 runStore 只读订阅面（结构子集——zustand useRunStore 满足；测试注入 fake）。
@@ -42,6 +43,10 @@ export interface RunsSource {
   setRuns(records: readonly TaskRunRecord[]): void;
   /** 重读注入的 listRuns（冷装载/收尾刷新驱动位） */
   refresh(): void;
+  /** 任务 tab 清空（§6.1e——A-9.2：仅清已结束 run、运行中/待确认保留；demo L2687-2688 同源） */
+  clearFinished(): void;
+  /** 定位目标解析（T6-11 locate-run：runId→{flowId,focusNodeId}——镜像槽位 statuses 优先） */
+  locateTargetOf(runId: string): LocateTarget | null;
   /** 未结束 runId 列表（心跳判据观测位） */
   unfinishedRunIds(): readonly string[];
   /** 生命周期收口：退订 runStore＋停心跳 */
@@ -109,6 +114,16 @@ export function createRunsSource(deps: RunsSourceDeps): RunsSource {
       records = deps.listRuns();
       syncTicker();
       reproject();
+    },
+    clearFinished() {
+      records = records.filter(isRunUnfinished); // 保留 running/waiting（未结束——03 §1「运行中保留」）
+      syncTicker();
+      reproject();
+    },
+    locateTargetOf(runId) {
+      const rec = records.find((r) => r.runId === runId);
+      if (rec === undefined) return null;
+      return resolveLocateTarget(rec, statusesOf(rec));
     },
     unfinishedRunIds,
     dispose() {

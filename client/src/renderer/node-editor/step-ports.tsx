@@ -55,8 +55,9 @@ export function StepPorts({ ports, errors, onChange }: StepPortsProps) {
           </div>
         )}
         <div className="flex flex-col gap-1.5">
+          {/* PM 授权一行修（2026-11-11，T6-07 返工登记）：ins 行 key=index 稳定——名逐字符编辑不得卸载重挂丢焦点（同 step-schema/outs 行 key 缺陷） */}
           {ports.ins.map((p, i) => (
-            <div key={`${p}-${i}`} data-ports-in-row={i} className="flex items-center gap-2">
+            <div key={i} data-ports-in-row={i} className="flex items-center gap-2">
               <input
                 value={p}
                 onChange={(e) => {
@@ -97,7 +98,7 @@ export function StepPorts({ ports, errors, onChange }: StepPortsProps) {
         </div>
         <div className="flex flex-col gap-1.5">
           {ports.outs.map((o, i) => (
-            <div key={`${o.id}-${i}`} data-ports-out-row={i} className="flex items-center gap-2">
+            <div key={i} /* T6-07 评审授权修复（限本行）：key=index 稳定——outs id 逐字符编辑不得卸载重挂丢焦点（同 step-schema 行 key 缺陷） */ data-ports-out-row={i} className="flex items-center gap-2">
               <input
                 data-ports-field="id"
                 value={o.id}

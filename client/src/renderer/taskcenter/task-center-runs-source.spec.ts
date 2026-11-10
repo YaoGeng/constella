@@ -128,4 +128,24 @@ describe('runs 数据装配（statuses 镜像→RunRow 列表快照面）', () =
       vi.useRealTimers();
     }
   });
+
+  it('clearFinished：已结束（done/error/aborted）移除、未结束（running/waiting）保留（§6.1e 任务 tab 语义）', () => {
+    const store = realStoreHarness();
+    const source = createRunsSource({
+      listRuns: () => [
+        rec({ runId: 'a', flowId: 'f1', status: 'running', t1: null }),
+        rec({ runId: 'b', flowId: 'f2', status: 'waiting', t1: null }),
+        rec({ runId: 'c', flowId: 'f3', status: 'done', t1: T0 + 1 }),
+        rec({ runId: 'd', flowId: 'f5', status: 'error', t1: T0 + 1 }),
+        rec({ runId: 'e', flowId: 'f6', status: 'aborted', t1: T0 + 1 }),
+      ],
+      runStore: store,
+      portsOf: () => [],
+      nodeName: () => 'x',
+      now: () => T0,
+    });
+    source.clearFinished();
+    expect(source.snapshot().map((r) => r.runId)).toEqual(['a', 'b']); // 运行中/待确认保留（03 §1「仅清已结束」）
+    source.dispose();
+  });
 });

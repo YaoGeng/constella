@@ -13,9 +13,10 @@ import { buildApp } from "../../app.js";
 import { prisma } from "../../utils/prisma.js";
 
 const app = buildApp();
+const EMAIL_PREFIX = "vitest-market-list-";
 
 function uniqueEmail(): string {
-  return `vitest-market-list-${randomUUID()}@test.local`;
+  return `${EMAIL_PREFIX}${randomUUID()}@test.local`;
 }
 
 interface SeedPackage {
@@ -89,17 +90,26 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const pkgIds = [approvedNode?.id, approvedFlow?.id, pendingPkg?.id, approvedNoVersion].filter(
-    (x): x is string => typeof x === "string",
-  );
-  await prisma.package.updateMany({ where: { id: { in: pkgIds } }, data: { latestVersionId: null } });
-  await prisma.$transaction([
-    prisma.packageVersion.deleteMany({ where: { packageId: { in: pkgIds } } }),
-    prisma.downloadStat.deleteMany({ where: { packageId: { in: pkgIds } } }),
-    prisma.reviewRecord.deleteMany({ where: { packageId: { in: pkgIds } } }),
-    prisma.package.deleteMany({ where: { id: { in: pkgIds } } }),
-    prisma.user.deleteMany({ where: { id: ownerId } }),
-  ]);
+  // T6-17 清扫健壮性：按 ownerUserId 全量查清（用户邮箱前缀→名下包→版本/审核/计量级联→用户）。
+  // 原实现按播种变量删——beforeAll 半途失败/变量 null 即残留行，user 删除被
+  // Package.ownerUserId FK 拦截（T5-11 留痕转交项）。两轮清扫防 in-flight 写入漏删。
+  for (let round = 0; round < 2; round++) {
+    const users = await prisma.user.findMany({ where: { email: { startsWith: EMAIL_PREFIX } }, select: { id: true } });
+    const userIds = users.map((u) => u.id);
+    if (userIds.length === 0) break;
+    const pkgs = await prisma.package.findMany({ where: { ownerUserId: { in: userIds } }, select: { id: true } });
+    const pkgIds = pkgs.map((p) => p.id);
+    if (pkgIds.length > 0) {
+      await prisma.package.updateMany({ where: { id: { in: pkgIds } }, data: { latestVersionId: null } });
+      await prisma.$transaction([
+        prisma.packageVersion.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.downloadStat.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.reviewRecord.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.package.deleteMany({ where: { id: { in: pkgIds } } }),
+      ]);
+    }
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+  }
   await prisma.$disconnect();
 });
 

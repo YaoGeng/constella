@@ -1,15 +1,18 @@
-// TaskCenterPanel —— 任务中心抽屉壳（T6-10；TDD-C-10 §3 TaskCenterPanel 行）。
+// TaskCenterPanel —— 任务中心抽屉壳（T6-10；TDD-C-10 §3 TaskCenterPanel 行；T6-11 后段填充）。
 //   右侧全高 480px 抽屉（01 §13 TC-2 裁定；demo L365）＋毛玻璃遮罩；任务/日志双 tab
-//   （任务=RunTable；日志=占位——T6-11 GlobalLogTab 填充）；Esc 层级序应答（本层=任务中心
-//   抽屉收起：开即应答；escGate()=false=上层浮层在场不应答——A-1.4「CDP 查看窗→抽屉→
-//   任务中心→弹窗」全局序接线归应用壳 T6-17）；点遮罩/✕ 收起（demo L2666-2680）。
+//   （任务=RunTable＋TaskNotices 提示行；日志=GlobalLogTab——T6-11）；清空跟 tab（demo
+//   L2682-2688：日志 tab=全局清、任务 tab=已结束移除运行中保留）；Esc 层级序应答（本层=
+//   任务中心抽屉收起：开即应答；escGate()=false=上层浮层在场不应答——A-1.4 全局序接线归
+//   应用壳 T6-17）；点遮罩/✕ 收起（demo L2666-2680）。
 //   开合态=uiStore 任务中心位（02 §3.3）——§3「无 props（开合态=uiStore）」：数据/动作经
 //   TaskCenterProvider 注入（context），本组件零 props。挂载归应用壳（T6-17）。
 import { useEffect, useState } from 'react';
 import { cn } from '../lib/utils';
 import { useUiStore } from './ui-store';
-import { useRunRows, useTaskCenter } from './task-center-context';
+import { useGlobalLogLines, useMissedNotices, useRunRows, useTaskCenter } from './task-center-context';
 import { RunTable } from './run-table';
+import { GlobalLogTab } from './global-log-tab';
+import { TaskNotices } from './task-notices';
 
 /** 抽屉宽（01 §13 TC-2 裁定：采信 demo L365 width:480px，右侧全高非全屏） */
 export const TASK_CENTER_WIDTH = 480;
@@ -21,6 +24,8 @@ export function TaskCenterPanel() {
   const close = useUiStore((s) => s.closeTaskCenter);
   const handle = useTaskCenter();
   const rows = useRunRows();
+  const { lines, cleared } = useGlobalLogLines();
+  const missed = useMissedNotices();
   const [tab, setTab] = useState<'tasks' | 'logs'>('tasks');
 
   // Esc 层级序应答（A-1.4）：本层收起仅当抽屉开且无上层浮层在场（escGate 仲裁注入位）
@@ -34,6 +39,13 @@ export function TaskCenterPanel() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, close, handle]);
+
+  // 清空跟 tab（A-9.2，demo L2682-2688）：日志 tab=全局日志清（bus.clear）；任务 tab=仅清
+  // 已结束 run、运行中/待确认保留（source.clearFinished）
+  const onClear = (): void => {
+    if (tab === 'logs') handle?.logs.clear();
+    else handle?.source.clearFinished();
+  };
 
   return (
     <>
@@ -67,7 +79,7 @@ export function TaskCenterPanel() {
             ✕
           </button>
         </header>
-        <nav className="flex gap-1 px-4 pb-2 pt-1" aria-label="任务中心视图">
+        <nav className="flex items-center gap-1 px-4 pb-2 pt-1" aria-label="任务中心视图">
           <button
             type="button"
             data-task-center-tab="tasks"
@@ -92,20 +104,32 @@ export function TaskCenterPanel() {
           >
             日志
           </button>
+          <span data-task-center="log-count" className="ml-1 font-mono text-[10px] text-[var(--tx-3)]">
+            {lines.length} 条
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            data-task-center="clear"
+            className="rounded-md border border-[var(--line)] px-2 py-0.5 text-xs text-[var(--tx-2)] transition-colors hover:border-[var(--accent-line)] hover:text-[var(--accent-hi)]"
+            onClick={onClear}
+          >
+            清空
+          </button>
         </nav>
         <div className="flex-1 overflow-y-auto px-3 py-2">
           {tab === 'tasks' ? (
-            <RunTable
-              rows={rows}
-              onStop={handle?.abortRun ?? NOOP}
-              onGoto={handle?.onGoto ?? NOOP}
-              activeFlowId={handle?.activeFlowId() ?? null}
-            />
+            <>
+              <TaskNotices missed={missed} laneMemories={handle?.laneMemories() ?? []} />
+              <RunTable
+                rows={rows}
+                onStop={handle?.abortRun ?? NOOP}
+                onGoto={handle?.onGoto ?? NOOP}
+                activeFlowId={handle?.activeFlowId() ?? null}
+              />
+            </>
           ) : (
-            // 日志 tab 占位（T6-11 GlobalLogTab 填充：级别着色/清空=全局清——demo L377/L2682-2686）
-            <div data-task-center="log-placeholder" className="px-2 py-6 text-center text-[11px] leading-5 text-[var(--tx-3)]">
-              暂无日志
-            </div>
+            <GlobalLogTab lines={lines} cleared={cleared} />
           )}
         </div>
       </aside>

@@ -145,3 +145,8 @@ export type {
   HitResolverDeps,
   HitResumeDecision,
 } from './hit-card-view';
+
+// T6-17：现场开发草稿卡 UI（T5-03 交付注「调用方挂 ConfirmGate 草稿卡」的渲染面补齐——
+// 02 §12.2#2 脚本明示＋adopt 后 B-5 试跑面板）
+export { NodeDraftCard, NodeTrialPanel } from './node-draft-card';
+export type { NodeDraftCardProps, NodeTrialPanelProps } from './node-draft-card';

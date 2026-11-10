@@ -249,8 +249,8 @@ describe('环节 2 StepPorts（ins/outs 增删＋出口命名＋卡片预览实�
   });
 });
 
-describe('环节 3~6 占位页（stepper 结构就位、能走全流程——内容随 T6-07/08/09）', () => {
-  it('四占位页各标承接卡号；六环节走全流程到 save', async () => {
+describe('环节 3 实体化（T6-07 已落 StepSchema）＋环节 4~6 占位页（随 T6-08/09）', () => {
+  it('schema=StepSchema 实表单（占位撤除）；script/inner/save 三占位页各标承接卡号；走全流程到 save', async () => {
     await act(async () => {
       openNodeEditor();
     });
@@ -260,8 +260,13 @@ describe('环节 3~6 占位页（stepper 结构就位、能走全流程——内
         setNativeValue(field(m.container, 'name'), '全流程');
         setNativeValue(field(m.container, 'type'), 'xhs.walk');
       });
+      await act(async () => {
+        m.container.querySelector<HTMLButtonElement>('[data-step-nav="schema"]')?.click();
+      });
+      expect(useDefinitionDraftStore.getState().step).toBe('schema'); // 门净可跳
+      expect(m.container.querySelector('[data-step-form="schema"]')).toBeTruthy(); // 实环节页
+      expect(m.container.querySelector('[data-step-placeholder]')).toBe(null); // 占位已由 T6-07 替换
       const expects: Array<[string, string]> = [
-        ['schema', 'T6-07'],
         ['script', 'T6-08'],
         ['inner', 'T6-09'],
         ['save', 'T6-09'],
@@ -270,7 +275,7 @@ describe('环节 3~6 占位页（stepper 结构就位、能走全流程——内
         await act(async () => {
           m.container.querySelector<HTMLButtonElement>(`[data-step-nav="${step}"]`)?.click();
         });
-        expect(useDefinitionDraftStore.getState().step).toBe(step); // 门净可跳
+        expect(useDefinitionDraftStore.getState().step).toBe(step);
         const ph = m.container.querySelector('[data-step-placeholder]');
         expect(ph?.getAttribute('data-step')).toBe(step);
         expect(ph?.textContent).toContain(card);

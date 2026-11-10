@@ -11,8 +11,8 @@
 //
 // T6-06 接线：「✨自定义」双分支（01 §5.3 PATH1）——「手动定义」=openNodeEditor 打开 C-13
 // 节点编辑器（EditorShell 宿主挂本组件——open=false 渲染 null；编辑器覆盖层独立于抽屉
-// 生命周期，抽屉关闭不弃草稿）；「让 AI 开发」=demo L2094-2100 冻结跳工坊行为，装配归
-// 应用壳（T6-17），本组件不接线。
+// 生命周期，抽屉关闭不弃草稿）；「让 AI 开发」=demo L2094-2100 冻结跳工坊行为——T6-17 接线
+// 为 CustomEvent 抛应用壳（constella:workshop:open——壳层开工坊＋预填；P-3 无 import 边）。
 import { useMemo, useRef, type ReactNode } from 'react';
 import { useCanvasStore } from '../canvas-store';
 import { useCanvasRegistry } from '../registry-context';
@@ -104,11 +104,25 @@ export function DrawerShell({
                 </div>
               </div>
             ))}
-            {/* PATH1 双分支入口（01 §5.3）：✨「让 AI 开发」=demo 冻结跳工坊行为（装配归应用壳
-                T6-17，本组件不接线）；「手动定义」打开 C-13 节点编辑器（T6-06 接线） */}
+            {/* PATH1 双分支入口（01 §5.3）：✨「让 AI 开发」=demo L2094-2100 冻结跳工坊行为——
+                T6-17 接线：closeDrawer＋CustomEvent 抛应用壳（工坊开合=壳层——P-3 无 import 边，
+                constella:panToNode 事件锚同款惯例；预填话术=demo L2097 逐字）；「手动定义」打开
+                C-13 节点编辑器（T6-06 接线＋T6-17 deps 注入——评审 NOTE-3 收口） */}
             <div className="cn-drawer__group">
               <div className="cn-drawer__group-title">自定义</div>
-              <button type="button" className="cn-drawer__type cn-drawer__type--custom" data-testid="drawer-custom-entry">
+              <button
+                type="button"
+                className="cn-drawer__type cn-drawer__type--custom"
+                data-testid="drawer-custom-entry"
+                onClick={() => {
+                  closeDrawer();
+                  document.dispatchEvent(
+                    new CustomEvent('constella:workshop:open', {
+                      detail: { prefill: '帮我开发一个自定义节点（带脚本资产包）：' },
+                    }),
+                  );
+                }}
+              >
                 <span className="cn-drawer__type-icon">✨</span>
                 <span>让 AI 开发</span>
               </button>
@@ -116,7 +130,12 @@ export function DrawerShell({
                 type="button"
                 className="cn-drawer__type cn-drawer__type--custom"
                 data-testid="drawer-custom-manual"
-                onClick={() => openNodeEditor()}
+                onClick={() =>
+                  openNodeEditor(undefined, {
+                    getDefinition: (t) => registry?.get(t),
+                    hasType: (t) => registry?.has(t) ?? false,
+                  })
+                }
               >
                 <span className="cn-drawer__type-icon">🛠️</span>
                 <span>手动定义</span>

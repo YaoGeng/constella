@@ -1,10 +1,8 @@
-// StepPlaceholder —— 环节 3~6 占位环节页（T6-06；05 T6-06 卡「环节 3~6 以占位环节页交付
-// （stepper 结构就位、能走全流程、内容区标随 T6-07/08/09）」）。
+// StepPlaceholder —— 环节 4~6 占位环节页（T6-06；05 T6-06 卡「环节 3~6 以占位环节页交付
+// （stepper 结构就位、能走全流程、内容区标随 T6-07/08/09）」——环节 3（schema）已由 T6-07
+// StepSchema 替换撤除，余环节 4（script）/5（inner）/6（save）两卡承接）。
 //
-// 接口约定（给 T6-07/08/09 的落位说明——替换本组件即得实环节页）：
-//   · T6-07 StepSchema/ParamFormPreview：挂 EditorShell 环节 3（schema）槽位——读写
-//     draft.paramsSchema/policy/io（N3 字段定义器＋N6/N7「高级声明」分组，03 §1 冻结形；
-//     ParamFormPreview=复用 C-02 ParamFormRenderer，经 ../definition form 面 import）。
+// 接口约定（给 T6-08/09 的落位说明——替换本组件即得实环节页）：
 //   · T6-08 StepScript/StepConfig（＋ContractInjector/SyntaxChecker/ConfigYamlEditor）：挂环节 4
 //     （script）槽位——读写 draft.exec＋脚本/config 文本资产（草稿资产面随该卡扩 DefinitionDraft）。
 //   · T6-09 StepInner（N5 步骤列表，数据形复用 T4-09 InnerExpander）＋StepSave/SavePipeline
@@ -12,16 +10,11 @@
 import type { EditorStepKey } from './definition-draft';
 
 export interface StepPlaceholderProps {
-  step: 'schema' | 'script' | 'inner' | 'save';
+  step: 'script' | 'inner' | 'save';
 }
 
 /** 占位说明（承接卡号＝后续卡的落位锚） */
 const PLACEHOLDER: Record<StepPlaceholderProps['step'], { title: string; card: string; note: string }> = {
-  schema: {
-    title: '参数 schema（N3）',
-    card: 'T6-07',
-    note: '字段定义器（类型白名单八类/默认值/必填/校验/help/分组）＋ParamFormPreview 实时预览＋N6/N7 高级声明分组',
-  },
   script: {
     title: '脚本＋配置（N4）',
     card: 'T6-08',

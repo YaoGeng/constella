@@ -66,19 +66,24 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const users = await prisma.user.findMany({ where: { email: { startsWith: EMAIL_PREFIX } }, select: { id: true } });
-  const userIds = users.map((u) => u.id);
-  const pkgs = await prisma.package.findMany({ where: { ownerUserId: { in: userIds } }, select: { id: true } });
-  const pkgIds = pkgs.map((p) => p.id);
-  if (pkgIds.length > 0) {
-    await prisma.package.updateMany({ where: { id: { in: pkgIds } }, data: { latestVersionId: null } });
-    await prisma.$transaction([
-      prisma.packageVersion.deleteMany({ where: { packageId: { in: pkgIds } } }),
-      prisma.reviewRecord.deleteMany({ where: { packageId: { in: pkgIds } } }),
-      prisma.downloadStat.deleteMany({ where: { packageId: { in: pkgIds } } }),
-      prisma.package.deleteMany({ where: { id: { in: pkgIds } } }),
-      prisma.user.deleteMany({ where: { id: { in: userIds } } }),
-    ]);
+  // T6-17 清扫健壮性：user 删除移出 pkgIds 空集守卫（无包用户不再漏删）＋两轮清扫
+  // 防 in-flight 写入漏删（storage 为 stub——无对象清理面）。
+  for (let round = 0; round < 2; round++) {
+    const users = await prisma.user.findMany({ where: { email: { startsWith: EMAIL_PREFIX } }, select: { id: true } });
+    const userIds = users.map((u) => u.id);
+    if (userIds.length === 0) break;
+    const pkgs = await prisma.package.findMany({ where: { ownerUserId: { in: userIds } }, select: { id: true } });
+    const pkgIds = pkgs.map((p) => p.id);
+    if (pkgIds.length > 0) {
+      await prisma.package.updateMany({ where: { id: { in: pkgIds } }, data: { latestVersionId: null } });
+      await prisma.$transaction([
+        prisma.packageVersion.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.reviewRecord.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.downloadStat.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.package.deleteMany({ where: { id: { in: pkgIds } } }),
+      ]);
+    }
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   }
   await prisma.$disconnect();
 });

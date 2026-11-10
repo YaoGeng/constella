@@ -36,8 +36,8 @@ export interface TaskRunRecord {
   status: RunStatus;
   t0: number;
   t1: number | null;
-  /** 可达节点总数（02 §10 #2 total=可达数；缺省以 statuses 键数兜底） */
-  total?: number;
+  /** 可达节点总数（02 §10 #2 total=可达数；必填——runs.list/RunSummary 恒有 total，漂移分母兜底已删〔T6-10 评审 MINOR，T6-11 顺手修〕） */
+  total: number;
   /** 终态行节点态附带（重放装载侧；运行行忽略——镜像优先） */
   statuses?: Readonly<Record<string, NodeStatus>>;
 }
@@ -99,7 +99,7 @@ export function project(
   now: number = Date.now(),
 ): RunRow {
   const done = Object.values(statuses).filter((s) => s === 'done').length;
-  const total = run.total ?? Object.keys(statuses).length;
+  const total = run.total; // 必填直用（02 §10 #2 可达数——不固化漂移分母）
   const currentNodes =
     run.status === 'running' || run.status === 'waiting'
       ? Object.entries(statuses)

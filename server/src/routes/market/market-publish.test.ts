@@ -69,28 +69,29 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
-  // 两轮清扫：第一轮后再查一次（防超时残留的 in-flight 写入造成漏删→FK 拦截）
+  // 两轮清扫（T6-17 对齐：user 删除移出 pkgIds 空集守卫——无包用户不漏删；第一轮后再查一次
+  // 防超时残留的 in-flight 写入造成漏删→FK 拦截）
   for (let round = 0; round < 2; round++) {
     const users = await prisma.user.findMany({ where: { email: { startsWith: EMAIL_PREFIX } }, select: { id: true } });
     const userIds = users.map((u) => u.id);
     if (userIds.length === 0) break;
     const pkgs = await prisma.package.findMany({ where: { ownerUserId: { in: userIds } }, select: { id: true } });
     const pkgIds = pkgs.map((p) => p.id);
-    const versions = await prisma.packageVersion.findMany({ where: { packageId: { in: pkgIds } } });
+    const versions = pkgIds.length > 0 ? await prisma.packageVersion.findMany({ where: { packageId: { in: pkgIds } } }) : [];
     const storage = getStorage();
     for (const v of versions) {
       await storage.delete(v.storageKey).catch(() => undefined);
     }
-    await prisma.package.updateMany({ where: { id: { in: pkgIds } }, data: { latestVersionId: null } });
     if (pkgIds.length > 0) {
+      await prisma.package.updateMany({ where: { id: { in: pkgIds } }, data: { latestVersionId: null } });
       await prisma.$transaction([
         prisma.packageVersion.deleteMany({ where: { packageId: { in: pkgIds } } }),
         prisma.reviewRecord.deleteMany({ where: { packageId: { in: pkgIds } } }),
         prisma.downloadStat.deleteMany({ where: { packageId: { in: pkgIds } } }),
         prisma.package.deleteMany({ where: { id: { in: pkgIds } } }),
-        prisma.user.deleteMany({ where: { id: { in: userIds } } }),
       ]);
     }
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   }
   await prisma.$disconnect();
 });

@@ -87,7 +87,8 @@ export function SettingsDialog({ open, onClose, deps, routeDeps }: SettingsDialo
             {section === 'interaction' && <InteractionSection dispatcher={dispatcher} />}
             {section === 'background' && <BackgroundSection dispatcher={dispatcher} />}
             {section === 'skyfield' && <SkyFieldSection dispatcher={dispatcher} />}
-            {section === 'danger' && <DangerZoneSection dispatcher={dispatcher} />}
+            {/* toast=deps.toast 下传（危险区失败面——T6-17 batch-1 转交③：装配链 deps→dialog→section） */}
+            {section === 'danger' && <DangerZoneSection dispatcher={dispatcher} toast={deps?.toast} />}
             {/* V1.1 注入位（硬前置 C-19+C-18+S-11 gate——导航项禁用使本分支 V1.0 不可达不渲染；
                 RouteSettingsSection 现返回 null，B2 波随 C-18 定形实装） */}
             {section === 'route' && <RouteSettingsSection deps={routeDeps} />}

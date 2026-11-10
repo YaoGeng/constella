@@ -100,7 +100,7 @@ describe('create 态：类型网格（C-05 listByCategory＋✨自定义 PATH1�
     }
   });
 
-  it('PATH1 手动定义分支：点击 → openNodeEditor 打开节点编辑器（create 态）；「让 AI 开发」支本组件不接线（跳工坊=应用壳装配）', async () => {
+  it('PATH1 手动定义分支：点击 → openNodeEditor 打开节点编辑器（create 态）；「让 AI 开发」支已接线（T6-17——constella:workshop:open 事件锚抛应用壳，见下一用例）', async () => {
     useCanvasStore.getState().openDrawer({ mode: 'create' });
     const { container, root } = await mountDrawer({});
     try {
@@ -112,6 +112,28 @@ describe('create 态：类型网格（C-05 listByCategory＋✨自定义 PATH1�
       expect(editor.mode).toBe('create');
       expect(useDefinitionDraftStore.getState().draft.meta.source).toBe('manual');
     } finally {
+      await act(async () => {
+        root.unmount();
+      });
+    }
+  });
+
+  it('PATH1「让 AI 开发」支（T6-17 接线）：点击 → closeDrawer＋dispatch constella:workshop:open{prefill}（demo L2094-2100 冻结跳工坊行为）', async () => {
+    useCanvasStore.getState().openDrawer({ mode: 'create' });
+    const { container, root } = await mountDrawer({});
+    const opened: Array<{ prefill?: string } | undefined> = [];
+    const onOpen = (ev: Event): void => {
+      opened.push((ev as CustomEvent<{ prefill?: string }>).detail);
+    };
+    document.addEventListener('constella:workshop:open', onOpen);
+    try {
+      await act(async () => {
+        container.querySelector<HTMLElement>('[data-testid="drawer-custom-entry"]')?.click();
+      });
+      expect(opened).toEqual([{ prefill: '帮我开发一个自定义节点（带脚本资产包）：' }]); // demo L2097 逐字
+      expect(useCanvasStore.getState().drawer).toBeNull(); // closeDrawer（demo L2096）
+    } finally {
+      document.removeEventListener('constella:workshop:open', onOpen);
       await act(async () => {
         root.unmount();
       });

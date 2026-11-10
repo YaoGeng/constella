@@ -37,13 +37,11 @@ let pendingId = "";
 let owner: { id: string; accessToken: string };
 let userB: { id: string; accessToken: string };
 let userC: { id: string; accessToken: string };
-const createdPackageIds: string[] = [];
 
 async function seedPackage(status: "APPROVED" | "PENDING"): Promise<string> {
   const pkg = await prisma.package.create({
     data: { kind: "NODE", name: `计量包-${status}-${randomUUID().slice(0, 8)}`, ownerUserId: owner.id, status, perms: ["网络"] },
   });
-  createdPackageIds.push(pkg.id);
   const version = await prisma.packageVersion.create({
     data: {
       packageId: pkg.id,
@@ -80,22 +78,30 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
-  const users = await prisma.user.findMany({ where: { email: { startsWith: EMAIL_PREFIX } }, select: { id: true } });
-  const userIds = users.map((u) => u.id);
-  const versions = await prisma.packageVersion.findMany({ where: { packageId: { in: createdPackageIds } } });
-  const storage = getStorage();
-  for (const v of versions) {
-    await storage.delete(v.storageKey).catch(() => undefined);
-  }
-  if (createdPackageIds.length > 0) {
-    await prisma.package.updateMany({ where: { id: { in: createdPackageIds } }, data: { latestVersionId: null } });
-    await prisma.$transaction([
-      prisma.packageVersion.deleteMany({ where: { packageId: { in: createdPackageIds } } }),
-      prisma.reviewRecord.deleteMany({ where: { packageId: { in: createdPackageIds } } }),
-      prisma.downloadStat.deleteMany({ where: { packageId: { in: createdPackageIds } } }),
-      prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } }),
-      prisma.user.deleteMany({ where: { id: { in: userIds } } }),
-    ]);
+  // T6-17 清扫健壮性：按 ownerUserId 全量查清（用户邮箱前缀→名下包→版本/审核/计量级联→用户）。
+  // 原实现按 createdPackageIds 追踪数组删——用例半途失败/漏登记即残留行，user 删除被
+  // Package.ownerUserId FK 拦截（T5-11 留痕转交项）。两轮清扫防 in-flight 写入漏删。
+  for (let round = 0; round < 2; round++) {
+    const users = await prisma.user.findMany({ where: { email: { startsWith: EMAIL_PREFIX } }, select: { id: true } });
+    const userIds = users.map((u) => u.id);
+    if (userIds.length === 0) break;
+    const pkgs = await prisma.package.findMany({ where: { ownerUserId: { in: userIds } }, select: { id: true } });
+    const pkgIds = pkgs.map((p) => p.id);
+    const versions = pkgIds.length > 0 ? await prisma.packageVersion.findMany({ where: { packageId: { in: pkgIds } } }) : [];
+    const storage = getStorage();
+    for (const v of versions) {
+      await storage.delete(v.storageKey).catch(() => undefined);
+    }
+    if (pkgIds.length > 0) {
+      await prisma.package.updateMany({ where: { id: { in: pkgIds } }, data: { latestVersionId: null } });
+      await prisma.$transaction([
+        prisma.packageVersion.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.reviewRecord.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.downloadStat.deleteMany({ where: { packageId: { in: pkgIds } } }),
+        prisma.package.deleteMany({ where: { id: { in: pkgIds } } }),
+      ]);
+    }
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   }
   await prisma.$disconnect();
 });

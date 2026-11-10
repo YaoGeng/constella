@@ -32,6 +32,12 @@ export interface RunStoreState {
   runClosed(flowId: string, runId: string): void;
   /** 节点态镜像写入（StatusBus 事件管线同点，A-6.5） */
   nodeStatus(e: NodeStatusEvent, flowId: string): void;
+  /**
+   * 重启还原镜像重建（C-03 §4 委托承接——C-10 restoreRunState 消费面，T6-11 增补）。
+   * statuses=runs.get node_runs 终态投影；仅重建 lastRunOfFlow（A-6.5 还原画面数据源）——
+   * 不占用 activeRunOfFlow（重启后无活跃 run，运行中位由 startRun 重新登记）。
+   */
+  restoreRun(flowId: string, runId: string, statuses: Readonly<Record<string, NodeStatus>>): void;
   hitOpened(hitId: string, runId: string, nodeId: string): void;
   hitClosed(hitId: string): void;
   /** 测试隔离 */
@@ -65,6 +71,12 @@ export const useRunStore = create<RunStoreState>((set, get) => ({
         ...get().lastRunOfFlow,
         [flowId]: { runId: last.runId, statuses: { ...last.statuses, [e.nodeId]: e.status } },
       },
+    });
+  },
+
+  restoreRun: (flowId, runId, statuses) => {
+    set({
+      lastRunOfFlow: { ...get().lastRunOfFlow, [flowId]: { runId, statuses } },
     });
   },
 

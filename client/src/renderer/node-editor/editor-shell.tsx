@@ -3,9 +3,11 @@
 // ./definition-draft，本组件为宿主渲染面：open=false 渲染 null）。
 //
 //   编排：环节导航（回退自由/前进受门）/当前环节表单（环节 1=StepMeta、2=StepPorts、
-// 3~6=StepPlaceholder 随 T6-07/08/09 替换）/实时校验回显（computeStepErrors——validateDefinition
-// 单一来源投影，错误定位到环节+字段）/上一步-下一步（未过门 next 禁用并标 data-gate-blocked）。
-//   预览：环节 1/2 右侧 NodeCardPreview（§3 复用处）——端口布局/✨/参数预览实时反映。
+// 3=StepSchema〔T6-07〕、4~6=StepPlaceholder 随 T6-08/09 替换）/实时校验回显
+// （computeStepErrors——validateDefinition 单一来源投影，错误定位到环节+字段）/
+// 上一步-下一步（未过门 next 禁用并标 data-gate-blocked）。
+//   预览：环节 1/2 右侧 NodeCardPreview（§3 复用处）——端口布局/✨/参数预览实时反映；
+// 环节 3 右侧 ParamFormPreview（§3 复用处=StepSchema——C-02 ParamFormRenderer 同源渲染，X-8）。
 //   dirty 位：未保存标「未保存」（草稿内存态——未保存不落盘，保存动作随 T6-09 StepSave）。
 import { useMemo } from 'react';
 import { cn } from '../lib/utils';
@@ -18,9 +20,11 @@ import {
   useDefinitionDraftStore,
 } from './definition-draft';
 import { NodeCardPreview } from './node-card-preview';
+import { ParamFormPreview } from './param-form-preview';
 import { StepMeta } from './step-meta';
-import { StepPorts } from './step-ports';
 import { StepPlaceholder } from './step-placeholder';
+import { StepPorts } from './step-ports';
+import { StepSchema } from './step-schema';
 
 const STEP_INDEX: Record<EditorStepKey, number> = {
   meta: 0,
@@ -49,7 +53,7 @@ export function EditorShell() {
   const seedError = useDefinitionDraftStore((s) => s.seedError);
   const deps = useDefinitionDraftStore((s) => s.deps);
   const dirty = useDefinitionDraftStore(isDirty);
-  const { goToStep, nextStep, prevStep, patchMeta, setType, setPorts, closeEditor } =
+  const { goToStep, nextStep, prevStep, patchMeta, setType, setPorts, setParamsSchema, setPolicy, setIo, closeEditor } =
     useDefinitionDraftStore.getState();
 
   const errors = useMemo(
@@ -147,7 +151,19 @@ export function EditorShell() {
                 {step === 'ports' && (
                   <StepPorts ports={draft.ports} errors={errors.ports ?? []} onChange={setPorts} />
                 )}
-                {(step === 'schema' || step === 'script' || step === 'inner' || step === 'save') && (
+                {step === 'schema' && (
+                  <StepSchema
+                    paramsSchema={draft.paramsSchema}
+                    policy={draft.policy ?? null}
+                    io={draft.io ?? null}
+                    exitIds={draft.ports.outs.map((o) => o.id)}
+                    errors={errors.schema ?? []}
+                    onSchemaChange={setParamsSchema}
+                    onPolicyChange={setPolicy}
+                    onIoChange={setIo}
+                  />
+                )}
+                {(step === 'script' || step === 'inner' || step === 'save') && (
                   <StepPlaceholder step={step} />
                 )}
               </div>
@@ -155,6 +171,14 @@ export function EditorShell() {
                 <div className="flex w-[220px] shrink-0 flex-col items-center gap-2 pt-2">
                   <NodeCardPreview def={draft} />
                   <span className="text-[10px] text-[var(--tx-3)]">卡片预览（实时反映）</span>
+                </div>
+              )}
+              {step === 'schema' && (
+                <div className="flex w-[264px] shrink-0 flex-col gap-2 pt-2">
+                  <span className="text-[10px] text-[var(--tx-3)]">表单预览（=未来抽屉表单渲染结果，X-8）</span>
+                  <div className="max-h-[54vh] overflow-y-auto pr-1">
+                    <ParamFormPreview schema={draft.paramsSchema} />
+                  </div>
                 </div>
               )}
             </div>

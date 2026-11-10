@@ -75,10 +75,14 @@ describe('§6.1a 行模型投影 project(run,statuses,ports,nodeName)', () => {
     expect(row.currentNodes).toEqual(['…', '…']);
   });
 
-  it('total 缺省以 statuses 键数兜底（重放半行——T6-11 runs.get 前的防御位）', () => {
-    const { total: _drop, ...rec } = runningRecord();
-    const row = project(rec, sevenNodeStatuses(), [], () => 'x', NOW);
-    expect(row.progress).toEqual({ done: 3, total: 5 });
+  it('total 必填（T6-10 评审 MINOR/T6-11 顺手修：runs.list·RunSummary 恒有 total——02 §10 #2 可达数；漂移分母兜底已删）', () => {
+    // 编译期即拒绝 total 缺位（必填形）——@ts-expect-error 在 total 必填后命中「缺 total」错误
+    // @ts-expect-error total 缺位：TaskRunRecord.total 必填
+    const missing: TaskRunRecord = { runId: 'x', flowId: 'f', flowName: 'n', status: 'done', t0: 1, t1: 2 };
+    void missing;
+    // 投影分母=run.total 恒直用（不再以 statuses 键数兜底——statuses 键数≠total 时以 total 为准）
+    const row = project(runningRecord({ total: 9 }), sevenNodeStatuses(), [], () => 'x', NOW);
+    expect(row.progress).toEqual({ done: 3, total: 9 });
   });
 
   it('状态映射：running/done=青、waiting=琥珀、error/aborted=红（01 A-9.1）＋五值文案（demo L2772）', () => {

@@ -17,6 +17,8 @@ import { AlertDialog } from './AlertDialog';
 /** 设置节组件公共 props（dispatcher 经 SettingsDialog 下传） */
 export interface SectionProps {
   dispatcher: SettingsDispatcher;
+  /** 危险区失败 toast（deps.toast 经装配下传——T6-17 batch-1 转交③；缺省=仅 console.error） */
+  toast?: (text: string) => void;
 }
 
 /** demo 设置文案表（L758-786——行标题/说明） */
@@ -188,8 +190,10 @@ export function SkyFieldSection({ dispatcher }: SectionProps) {
   );
 }
 
-/** 危险区节：恢复出厂（二次确认→settings.factoryReset op 恰一次；编排链归 C-06/C-M1） */
-export function DangerZoneSection(_props: SectionProps) {
+/** 危险区节：恢复出厂（二次确认→settings.factoryReset op 恰一次；编排链归 C-06/C-M1）。
+ * 失败面：toast（deps.toast 装配下传——T6-17 batch-1 转交③；此前仅 console.error 吞错）
+ * ＋console.error 日志留痕；「只发起 op」语义不变（不吞不重试不自愈）。 */
+export function DangerZoneSection({ toast }: SectionProps) {
   const factoryReset = useSettingsStore((s) => s.factoryReset);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -197,7 +201,10 @@ export function DangerZoneSection(_props: SectionProps) {
     if (busy) return;
     setBusy(true);
     void factoryReset()
-      .catch((err: unknown) => console.error('[DangerZone] factoryReset 失败：', err))
+      .catch((err: unknown) => {
+        console.error('[DangerZone] factoryReset 失败：', err);
+        toast?.(`恢复出厂失败：${err instanceof Error ? err.message : String(err)}`);
+      })
       .finally(() => {
         setBusy(false);
         setConfirming(false);
