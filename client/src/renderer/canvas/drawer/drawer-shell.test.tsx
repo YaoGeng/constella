@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, beforeEach } from 'vitest';
 import type { NodeDefinition } from '@constella/shared/dsl';
 import type { NodeRegistry } from '../../node-registry';
+import { useDefinitionDraftStore } from '../../node-editor';
 import { DrawerShell } from './DrawerShell';
 import { CanvasRegistryContext } from '../registry-context';
 import { useCanvasStore } from '../canvas-store';
@@ -71,6 +72,7 @@ async function mountDrawer(props: Parameters<typeof DrawerShell>[0]) {
 }
 
 beforeEach(() => {
+  useDefinitionDraftStore.getState().reset(); // node-editor 草稿隔离（手动定义分支接线用例）
   useCanvasStore.setState({ drawer: null, editMode: true });
   useFlowStore.getState().loadFlow('f1', {
     id: 'f1', name: 't',
@@ -80,16 +82,35 @@ beforeEach(() => {
 });
 
 describe('create 态：类型网格（C-05 listByCategory＋✨自定义 PATH1）', () => {
-  it('按类目分组渲染＋custom 类型带 ✨＋「自定义节点」入口', async () => {
+  it('按类目分组渲染＋custom 类型带 ✨＋「✨自定义」双分支入口（让 AI 开发/手动定义）', async () => {
     useCanvasStore.getState().openDrawer({ mode: 'create' });
     const { container, root } = await mountDrawer({});
     try {
       const groups = container.querySelectorAll('.cn-drawer__group-title');
       expect(Array.from(groups).map((g) => g.textContent)).toEqual(expect.arrayContaining(['AI', '触发', '自定义']));
       const types = container.querySelectorAll('.cn-drawer__type');
-      expect(types).toHaveLength(4); // 3 定义 + 1 自定义入口
+      expect(types).toHaveLength(5); // 3 定义 + 双分支（让 AI 开发/手动定义——01 §5.3 PATH1）
       expect(container.querySelector('[data-node-type="custom.mine"] .cn-drawer__type-spark')?.textContent).toBe('✨');
       expect(container.querySelector('[data-testid="drawer-custom-entry"]')).toBeTruthy();
+      expect(container.querySelector('[data-testid="drawer-custom-manual"]')).toBeTruthy();
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+    }
+  });
+
+  it('PATH1 手动定义分支：点击 → openNodeEditor 打开节点编辑器（create 态）；「让 AI 开发」支本组件不接线（跳工坊=应用壳装配）', async () => {
+    useCanvasStore.getState().openDrawer({ mode: 'create' });
+    const { container, root } = await mountDrawer({});
+    try {
+      await act(async () => {
+        container.querySelector<HTMLElement>('[data-testid="drawer-custom-manual"]')?.click();
+      });
+      const editor = useDefinitionDraftStore.getState();
+      expect(editor.open).toBe(true);
+      expect(editor.mode).toBe('create');
+      expect(useDefinitionDraftStore.getState().draft.meta.source).toBe('manual');
     } finally {
       await act(async () => {
         root.unmount();

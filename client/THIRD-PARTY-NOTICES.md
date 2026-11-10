@@ -2,17 +2,18 @@
 
 > 本文件由 `client/scripts/gen-notices.mjs` 生成（S-9 义务：Electron 分发物须随附第三方许可声明；
 > TDD-C-M1 §6.1g 以本文件为断言输入——须存在且覆盖 client/package.json 依赖清单）。
-> 生成时间：2026-11-10 03:18:23（UTC）｜重新生成：`pnpm -F ./client run notices`
+> 生成时间：2026-11-10 17:42:21（UTC）｜重新生成：`pnpm -F ./client run notices`
 >
 > 当前为 T0-08 基线骨架：依赖安装前以内建映射 + 许可证全文模板占位（标 ⚠ 项待复核）；
 > `pnpm install` 后重跑脚本将自动升级为 node_modules 安装态的官方 LICENSE 文本。
 
-## 汇总表（26 项，须与 client/package.json 依赖清单一一对应）
+## 汇总表（27 项，须与 client/package.json 依赖清单一一对应）
 
 | 包 | 锁定版本 | 许可证 | 信息来源 |
 |---|---|---|---|
 | @constella/shared | workspace:* | UNKNOWN | node_modules 安装态 |
 | @dagrejs/dagre | 3.1.3 | MIT | node_modules 安装态 |
+| @lezer/python | 1.1.19 | MIT | node_modules 安装态 |
 | @tailwindcss/vite | 4.3.5 | MIT | node_modules 安装态 |
 | @types/node | 24.19.2 | MIT | node_modules 安装态 |
 | @types/react | 19.3.0 | MIT | node_modules 安装态 |
@@ -56,6 +57,34 @@
 
 ```
 Copyright (c) 2012-2014 Chris Pettitt
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @lezer/python 1.1.19（MIT）
+
+仓库：git+https://code.haverbeke.berlin/lezer/python.git
+
+```
+MIT License
+
+Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

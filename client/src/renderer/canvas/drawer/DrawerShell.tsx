@@ -8,12 +8,18 @@
 // 动作区：保存（默认编排=DrawerContent.requestSave 校验＋写回→成功关抽屉＋onSave 回调——
 // T3-08「保存=校验」语义内置化，onSave 保留为成功后回调注入位）/取消/删除/入库（=C-06
 // library.upsert 注入位）/试跑（T5-03 B-5 面注入位）。
+//
+// T6-06 接线：「✨自定义」双分支（01 §5.3 PATH1）——「手动定义」=openNodeEditor 打开 C-13
+// 节点编辑器（EditorShell 宿主挂本组件——open=false 渲染 null；编辑器覆盖层独立于抽屉
+// 生命周期，抽屉关闭不弃草稿）；「让 AI 开发」=demo L2094-2100 冻结跳工坊行为，装配归
+// 应用壳（T6-17），本组件不接线。
 import { useMemo, useRef, type ReactNode } from 'react';
 import { useCanvasStore } from '../canvas-store';
 import { useCanvasRegistry } from '../registry-context';
 import { useFlowStore } from '../stores/flow-store';
 import { cn } from '../../lib/utils';
 import type { SecretParamBinder } from '../../definition';
+import { EditorShell, openNodeEditor } from '../../node-editor';
 import { DrawerContent, type DrawerContentHandle } from './DrawerContent';
 
 export interface DrawerShellProps {
@@ -53,7 +59,8 @@ export function DrawerShell({
   const node = drawer?.nodeId ? nodes.find((n) => n.id === drawer.nodeId) : undefined;
   const def = node ? registry?.get(String((node.data as { type?: string }).type ?? '')) : undefined;
 
-  if (!drawer) return null;
+  // 无 drawer 态只挂编辑器宿主（open=false 渲染 null——编辑器生命周期独立于抽屉）
+  if (!drawer) return <EditorShell />;
 
   const isReadonly = drawer.mode === 'readonly' || running;
 
@@ -65,7 +72,10 @@ export function DrawerShell({
   };
 
   return (
-    <aside className={cn('cn-drawer', drawer && 'cn-drawer--open')} data-drawer-mode={drawer.mode}>
+    <>
+      {/* C-13 节点编辑器宿主（「手动定义」入口对面——open=false 渲染 null；抽屉关不弃草稿） */}
+      <EditorShell />
+      <aside className={cn('cn-drawer', drawer && 'cn-drawer--open')} data-drawer-mode={drawer.mode}>
       <div className="cn-drawer__inner">
         <button type="button" className="cn-drawer__x" aria-label="关闭抽屉" onClick={closeDrawer}>
           ✕
@@ -94,12 +104,22 @@ export function DrawerShell({
                 </div>
               </div>
             ))}
-            {/* PATH1 双分支入口：✨自定义（AI 现场开发/手动——C-02/C-07 随 P5 接线） */}
+            {/* PATH1 双分支入口（01 §5.3）：✨「让 AI 开发」=demo 冻结跳工坊行为（装配归应用壳
+                T6-17，本组件不接线）；「手动定义」打开 C-13 节点编辑器（T6-06 接线） */}
             <div className="cn-drawer__group">
               <div className="cn-drawer__group-title">自定义</div>
               <button type="button" className="cn-drawer__type cn-drawer__type--custom" data-testid="drawer-custom-entry">
                 <span className="cn-drawer__type-icon">✨</span>
-                <span>自定义节点</span>
+                <span>让 AI 开发</span>
+              </button>
+              <button
+                type="button"
+                className="cn-drawer__type cn-drawer__type--custom"
+                data-testid="drawer-custom-manual"
+                onClick={() => openNodeEditor()}
+              >
+                <span className="cn-drawer__type-icon">🛠️</span>
+                <span>手动定义</span>
               </button>
             </div>
           </div>
@@ -162,5 +182,6 @@ export function DrawerShell({
         {drawer.mode === 'readonly' && !node && <div className="cn-drawer__readonly">只读模式</div>}
       </div>
     </aside>
+    </>
   );
 }

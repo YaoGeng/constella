@@ -7,6 +7,20 @@ import { defineConfig } from 'vite'
 // 见 src/App.tsx 顶部注释；路由级 React.lazy 随 P5 波 A-01 路由表落地。
 export default defineConfig({
   plugins: [react()],
+  // 静态托管于 www/admin/（TDD-A-01 §4 构建产物；base 设计值 /admin/——M5 部署卡核对）
+  base: '/admin/',
+  server: {
+    // 监听 IPv4 回环（本机 localhost 解析为 ::1 时 127.0.0.1 curl 不通——§6.3 冒烟命令口径）
+    host: '127.0.0.1',
+    // dev 期 API 反代（TDD-A-01 §1：dev=Vite server.proxy → http://127.0.0.1:8051；
+    // 生产与 server 同域经反代免 CORS——部署标准 §5.3/§8 步 4，与 S-01 K3 同口径）
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8051',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     // 现代浏览器基线，与 tsconfig.base.json target ES2022 对齐
     target: 'es2022',
