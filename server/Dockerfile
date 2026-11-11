@@ -13,8 +13,10 @@ ARG VERSION=0.0.0
 
 FROM node:24.6-alpine AS builder
 WORKDIR /repo
-# pnpm 由 corepack 按根 package.json packageManager 字段解析（pnpm@12.11.2）——与 lockfile 生成器同版
-RUN corepack enable
+# pnpm＝npm 直装精确版 12.11.2（=根 packageManager 字段——与 lockfile 生成器同版）。
+# （弃 corepack：Actions buildkit 内 corepack 拉 pnpm.cjs 失败〔2026-11-12 实测——
+#   Cannot find module ~/.cache/node/corepack/.../pnpm.cjs〕；npm 直装确定性更高。）
+RUN npm install -g pnpm@12.11.2
 # manifest 先行（层缓存）：根三件 + server 闭包成员 package.json（--filter ./server... = server 及其 workspace 依赖 shared）
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY shared/package.json ./shared/
