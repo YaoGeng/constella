@@ -26,10 +26,13 @@ prototypes
 docs
 
 # —— 运行时数据与本地等价验证残留（T6-14 等价链产物：部署树/运行件树，勿入镜像）——
-**/storage
-**/storage-*
-server/.deploy-eq
-server/.run-tools-eq
+# ⚠ 锚定到 server/ 根（2026-11-12 上线实测修复）：原 `**/storage` 通配误伤源码目录
+#   server/src/infra/storage/（**/ 任意深度匹配），致部署树缺 infra、容器启动 ERR_MODULE_NOT_FOUND
+#   （本地等价走工作树不经本表故未暴露）。运行时数据目录=server/storage/，按根锚定排除。
+/server/storage
+/server/storage-*
+/server/.deploy-eq
+/server/.run-tools-eq
 
 # —— 杂项 ——
 *.log
