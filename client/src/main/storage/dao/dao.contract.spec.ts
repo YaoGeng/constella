@@ -54,15 +54,17 @@ describe.each(TEST_ENGINES)('storage dao [%s]', (engine: DbEngine) => {
     const tmp = makeTempDb();
     try {
       const { layer, dao } = openCtx(engine, tmp);
+      // 种子基数动态取（T6-18 后 bare 面=4：F5~F9 待示例载体渐进补种——本用例断言
+      // create/list/reorder/softDelete 语义，不锁种子基数）
+      const seeded = dao.flows.list().items.length;
       const a = dao.flows.create('流程A');
       const b = dao.flows.create('流程B');
       expect(a.id).not.toBe(b.id);
 
-      // open() 已种 9 条种子流程——列表=种子 9＋新建 2（新建排尾，order_idx=max+1）
       const createdOnly = (items: { id: string; name: string }[]): { id: string; name: string }[] =>
         items.filter((x) => x.id === a.id || x.id === b.id);
       let items = dao.flows.list().items;
-      expect(items).toHaveLength(11);
+      expect(items).toHaveLength(seeded + 2); // 新建排尾（order_idx=max+1）
       expect(createdOnly(items).map((x) => x.name)).toEqual(['流程A', '流程B']);
 
       // get：新流程=空画布
@@ -77,7 +79,7 @@ describe.each(TEST_ENGINES)('storage dao [%s]', (engine: DbEngine) => {
 
       dao.flows.softDelete(b.id);
       items = dao.flows.list().items;
-      expect(items).toHaveLength(10);
+      expect(items).toHaveLength(seeded + 1);
       expect(createdOnly(items).map((x) => x.id)).toEqual([a.id]);
       expect(() => dao.flows.get(b.id)).toThrow(/流程不存在/);
       expect(() => dao.flows.rename(b.id, 'x')).toThrow(/流程不存在/);

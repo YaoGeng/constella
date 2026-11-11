@@ -1,7 +1,7 @@
-// 示例资产 9 zip 生成脚本（T5-08 / TDD-C-08 §3 示例资产段）。
+// 示例资产 10 zip 生成脚本（T5-08 / TDD-C-08 §3 示例资产段；T6-18 增 xhs.comment.post 9→10）。
 //
 // 用法：node scripts/gen-examples.mjs [outDir]（缺省=client/assets/examples）
-//   产物：<type>.zip ×9——由 src/main/zip/example-assets.ts（单一事实源）经 main/zip
+//   产物：<type>.zip ×10——由 src/main/zip/example-assets.ts（单一事实源）经 main/zip
 //   ZipWriter 产出（store 档＋CRC32/伪目录自校验＋ZIP_EPOCH 确定性——同输入同字节，
 //   content_hash 跨机稳定＝ExamplePreloader 二启零 delta 的幂等前提）。
 //
@@ -59,8 +59,8 @@ await build({
 
 const { writeExampleZips, EXAMPLE_COUNT } = await import(pathToFileURL(bundleOut).href);
 const { written, dir } = await writeExampleZips(outDir);
-if (written !== EXAMPLE_COUNT || EXAMPLE_COUNT !== 9) {
-  console.error(`[gen-examples] 产物数 ${written} ≠ 9（EXAMPLE_COUNT=${EXAMPLE_COUNT}）`);
+if (written !== EXAMPLE_COUNT || EXAMPLE_COUNT !== 10) {
+  console.error(`[gen-examples] 产物数 ${written} ≠ 10（EXAMPLE_COUNT=${EXAMPLE_COUNT}）`);
   process.exit(1);
 }
 console.log(`[gen-examples] ok：${written} 枚示例 zip → ${dir}`);

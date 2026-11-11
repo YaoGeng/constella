@@ -19,8 +19,18 @@ import { useCanvasRegistry } from '../registry-context';
 import { useFlowStore } from '../stores/flow-store';
 import { cn } from '../../lib/utils';
 import type { SecretParamBinder } from '../../definition';
-import { EditorShell, openNodeEditor } from '../../node-editor';
+import { EditorShell, openNodeEditor, type EditorEntryDeps } from '../../node-editor';
 import { DrawerContent, type DrawerContentHandle } from './DrawerContent';
+
+// T6-16 生产接线（PM 授权本文件最小改动）：应用壳（AppShell）装配 SavePipeline 后经
+// bindNodeEditorEntryDeps 注入「手动定义」入口的 EditorEntryDeps 增量（savePipeline）；
+// 未注入=保存钮未装配态（T6-09 结构性测试锁定）。getDefinition/hasType 仍本组件就地取
+// registry（CanvasRegistryContext）——经 CanvasChrome props 链不可达（未转发），bind 面为
+// notifyHost.bind 同款装配惯例（canvas/index.ts 导出面不动）。
+let nodeEditorEntryExtras: Pick<EditorEntryDeps, 'savePipeline'> | null = null;
+export function bindNodeEditorEntryDeps(extras: Pick<EditorEntryDeps, 'savePipeline'> | null): void {
+  nodeEditorEntryExtras = extras;
+}
 
 export interface DrawerShellProps {
   /** create 态选类型回调（缺省=dropAtViewportCenter 最小落图）。 */
@@ -134,6 +144,7 @@ export function DrawerShell({
                   openNodeEditor(undefined, {
                     getDefinition: (t) => registry?.get(t),
                     hasType: (t) => registry?.has(t) ?? false,
+                    ...(nodeEditorEntryExtras ?? {}), // T6-16：应用壳注入的 savePipeline 随入口下发
                   })
                 }
               >

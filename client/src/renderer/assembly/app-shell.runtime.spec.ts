@@ -10,14 +10,18 @@
 //     loadFlow 切换→panToNode 经视口桥（绑定 fake instance 断言 setCenter）。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
+  FlowDoc,
+  RunStatus,
+  RunSummary,
   ScriptEvent,
   StorageInvokeReq,
   ZipImportReq,
   ZipImportRes,
 } from '@constella/shared/ipc';
+import type { NodeDefinition } from '@constella/shared/dsl';
 import type { ConstellaApi } from '../../preload/api';
 import { useFlowStore } from '../canvas/stores/flow-store';
-import { LOCATE_DIRTY_TOAST, locateRun } from '../taskcenter';
+import { LOCATE_DIRTY_TOAST, laneMemoryAlertText, locateRun, overBudgetLanes } from '../taskcenter';
 import { DEFAULT_SETTINGS, useSettingsStore } from '../settings';
 import type { AdoptDraftResult } from '../workshop';
 import { createAppRuntime, type AppRuntime } from './app-runtime';
@@ -35,6 +39,7 @@ interface ApiHarness {
   pushScriptEvent(e: ScriptEvent): void;
   zipImportCalls: ZipImportReq[];
   setZipImport(impl: (payload: ZipImportReq) => Promise<ZipImportRes>): void;
+  setEnvSystemInfo(impl: () => Promise<unknown>): void;
 }
 
 function makeApi(): ApiHarness {
@@ -46,9 +51,16 @@ function makeApi(): ApiHarness {
   let zipImportImpl: (payload: ZipImportReq) => Promise<ZipImportRes> = async () => {
     throw new Error('zipImport 未配置');
   };
+  let envSystemInfoImpl: () => Promise<unknown> = async () => ({
+    os: 'test',
+    cpuCores: 1,
+    memTotal: 1,
+    runtimeVersions: {},
+    lanes: [],
+  });
   const api = {
     appVersion: async () => ({ version: 'test' }),
-    envSystemInfo: async () => ({ os: 'test', cpuCores: 1, memTotal: 1, runtimeVersions: {}, lanes: [] }),
+    envSystemInfo: async () => envSystemInfoImpl(),
     envCdpProbe: async () => ({ ok: true }),
     shellOpenExternal: async () => undefined,
     dialogOpenFile: async () => ({ path: null }),
@@ -101,6 +113,9 @@ function makeApi(): ApiHarness {
     zipImportCalls,
     setZipImport: (impl) => {
       zipImportImpl = impl;
+    },
+    setEnvSystemInfo: (impl) => {
+      envSystemInfoImpl = impl;
     },
   };
 }
@@ -361,6 +376,93 @@ describe('autoSave 排程链＋Ctrl+S 保存编排（PM 补接线——T1-08/T4-
   });
 });
 
+describe('SavePipeline 生产接线（T6-16——C-13 保存链应用壳装配，mock IPC 边界）', () => {
+  const TS_CODE = 'export const PARAMS = { query: "咖啡" };\nexport async function run(ctx) { return { items: [] }; }\n';
+
+  it('rt.nodeEditor.savePipeline：真 assembleNodePackage 产物 bytes 直入 zip:import（inspect→commit）＋注册表/定义库/节点库三面绑定', async () => {
+    const { rt, h } = makeRuntime();
+    const phases: string[] = [];
+    let inspectByteLength = 0;
+    h.setZipImport(async (payload) => {
+      phases.push(payload.phase);
+      if (payload.phase === 'inspect') {
+        inspectByteLength = (payload as { bytes: Uint8Array }).bytes.byteLength;
+        return {
+          nodes: [],
+          noScript: [],
+          categories: [],
+          manifest: {
+            kind: 'node',
+            name: '取数',
+            version: '1.0.0',
+            scripts: { 'demo.fetcher': { file: 'scripts/demo_fetcher.ts', lang: 'ts', entry: 'run' } },
+          },
+          token: 'tok-save-1',
+        };
+      }
+      return {
+        nodes: [{ id: 'n-imp-1', type: 'demo.fetcher', name: '取数', position: { x: 0, y: 0 }, params: {} }],
+        noScript: [],
+      };
+    });
+
+    const report = await rt.nodeEditor.savePipeline.saveToLibrary(
+      {
+        type: 'demo.fetcher',
+        kind: 'custom',
+        meta: { name: '取数', icon: '🔧', category: '数据', source: 'zip' },
+        ports: { ins: ['in'], outs: [{ id: 'out', label: '完成' }] },
+        paramsSchema: [{ k: 'query', t: 'text', required: true, default: '咖啡' }],
+        exec: null,
+        policy: null,
+        io: null,
+        inner: null,
+        version: '1.0.0',
+        packageVersion: '1.0.0',
+      },
+      { scripts: { 'scripts/demo_fetcher.ts': TS_CODE }, config: {} },
+    );
+    expect(report).toEqual({ ok: true });
+    // 产物=真 workshop assembleNodePackage（bytes 直入既有 zip:import 通道恰两段——24 通道零新增）
+    expect(phases).toEqual(['inspect', 'commit']);
+    expect(inspectByteLength).toBeGreaterThan(100);
+    // ① 注册表绑定（C-05 register——source 恒改写 manual＋N4 exec 定型 ts）
+    expect(rt.registry.get('demo.fetcher')?.meta.source).toBe('manual');
+    expect(rt.registry.get('demo.fetcher')?.exec).toMatchObject({ lang: 'ts', file: 'scripts/demo_fetcher.ts', entry: 'run' });
+    // ② 定义库绑定（IpcDefinitionStore.upsertDefinition→definitions.upsert op）
+    expect(h.storageCalls.some((c) => c.op === 'definitions.upsert')).toBe(true);
+    // ③ 节点库绑定（library.upsert 恰一——T6-19 单写去重：显式段已去，唯一写=链内 ImportOrchestrator ⑥段）
+    expect(h.storageCalls.filter((c) => c.op === 'library.upsert')).toHaveLength(1);
+  });
+});
+
+describe('lane 内存告警数据面复跑（T6-16——T6-11 mock 解除复跑：env:systemInfo lanes 真数据）', () => {
+  it('boot→env:systemInfo lanes→taskCenterDeps.laneMemories 真数据可达（超预算行经 overBudgetLanes 真形告警）', async () => {
+    const { rt, h } = makeRuntime();
+    h.setStorage('definitions.loadAll', async () => []);
+    // 真数据面形：main domain-channels lanes=deps.laneMemory()（production-assembly→CdpSessionManager
+    // .laneMemory 聚合）；renderer 经既有 env:systemInfo 通道（24 冻结面）轮询——mock 仅 IPC 边界
+    h.setEnvSystemInfo(async () => ({
+      os: 'test',
+      cpuCores: 1,
+      memTotal: 1,
+      runtimeVersions: {},
+      lanes: [
+        { laneKey: 'main', label: '主车道', workingSetBytes: 160 * 1024 * 1024 }, // 超预算（>150MB）
+        { laneKey: 'side', label: '旁车道', workingSetBytes: 20 * 1024 * 1024 }, // 预算内（不告警）
+      ],
+    }));
+
+    await rt.boot(); // 启动序首拍 refreshBackground（10s 轮询=POLL_MS）
+    await vi.waitFor(() => {
+      expect(rt.taskCenterDeps.laneMemories!()).toHaveLength(2); // 真数据落地装配位 getter
+    });
+    const over = overBudgetLanes(rt.taskCenterDeps.laneMemories!());
+    expect(over.map((l) => l.laneKey)).toEqual(['main']); // 预算内 lane 不告警
+    expect(laneMemoryAlertText(over[0]!)).toBe('「主车道」内存 160MB 超预算（150MB）'); // §8① 文案真形
+  });
+});
+
 describe('C-10 定位编排脏闸贯通（locate 六原语真接线）', () => {
   const target = { runId: 'r-1', flowId: 'flow-9', focusNodeId: 'n-target' };
 
@@ -400,5 +502,120 @@ describe('C-10 定位编排脏闸贯通（locate 六原语真接线）', () => {
       expect(setCenter).toHaveBeenCalledWith(300 + 96, 120 + 40, { zoom: 1, duration: 200 });
     });
     expect(h.storageCalls.some((c) => c.op === 'flows.get' && (c.args as { id: string }).id === 'flow-9')).toBe(true);
+  });
+});
+
+// ————————————————————————————————————————————
+// 活行入表/收尾刷新装配（T6-19 ②——A2 线遗留1；mock IPC 边界两例）
+// runs-source 注入位设计消费面：listRuns=同步快照（boot 冷装载 runs.list 灌入）＋活跃集变化
+// （runOpened/runClosed——RunEngine 事件管线同点镜像写入）→ runs.list 重读＋onRunsChanged
+// 通知（AppShell 连接器→TaskCenter source.refresh）。
+// ————————————————————————————————————————————
+
+describe('活行入表/收尾刷新装配（T6-19——taskCenterDeps.listRuns 冷装载＋RunEngine 事件→runs$ 驱动）', () => {
+  const TRIGGER_DEF: NodeDefinition = {
+    type: 'trigger.manual',
+    kind: 'builtin',
+    meta: { name: '手动触发', icon: '⚡', category: '触发' },
+    ports: { ins: [], outs: [{ id: 'out', label: '出' }] },
+    paramsSchema: [],
+    exec: null,
+    version: '1.0.0',
+    packageVersion: '1.0.0',
+  };
+  const CUSTOM_DEF: NodeDefinition = {
+    type: 'custom.x',
+    kind: 'custom',
+    meta: { name: '脚本节点', icon: '🔧', category: '数据' },
+    ports: { ins: ['in'], outs: [{ id: 'out', label: '出' }] },
+    paramsSchema: [],
+    exec: { lang: 'ts', file: 'scripts/x.ts', entry: 'run' },
+    version: '1.0.0',
+    packageVersion: '1.0.0',
+  };
+  const FLOW: FlowDoc = {
+    id: 'f-1',
+    name: '装配流程',
+    nodes: [
+      { id: 't1', type: 'trigger.manual', name: '触发', position: { x: 0, y: 0 }, params: {} },
+      { id: 'x1', type: 'custom.x', name: '脚本', position: { x: 200, y: 0 }, params: {} },
+    ],
+    edges: [{ id: 'e0', from: ['t1', 'out'], to: ['x1', 'in'] }],
+  };
+
+  interface Rec {
+    id: string;
+    flowId: string;
+    name: string;
+    status: RunStatus;
+    t0: number;
+    t1: number | null;
+    aborted: number;
+    failed: number;
+    total: number;
+    skips: unknown[];
+    createdAt: number;
+  }
+
+  /** runs 域 mock（runs.list/create/finish 内存镜像＋flows.get/双写 op——startRun 全链走通） */
+  function wireRunOps(h: ReturnType<typeof makeApi>, preexisting = true): Map<string, Rec> {
+    h.setStorage('definitions.loadAll', async () => []); // boot 装载序（registry.loadAll）
+    const recs = new Map<string, Rec>();
+    if (preexisting) {
+      recs.set('r-pre', { id: 'r-pre', flowId: 'f-1', name: '装配流程', status: 'done', t0: 1, t1: 2, aborted: 0, failed: 0, total: 2, skips: [], createdAt: 1 });
+    }
+    let seq = 0;
+    h.setStorage('runs.list', async () => ({ items: [...recs.values()] as RunSummary[] }));
+    h.setStorage('runs.create', async (req) => {
+      const { flowId, name } = (req as { op: 'runs.create'; args: { flowId: string; name: string } }).args;
+      const id = `r${++seq}`;
+      recs.set(id, { id, flowId, name, status: 'running', t0: Date.now(), t1: null, aborted: 0, failed: 0, total: 0, skips: [], createdAt: Date.now() });
+      return { id };
+    });
+    h.setStorage('runs.finish', async (req) => {
+      const a = (req as { op: 'runs.finish'; args: { runId: string; status: RunStatus; t1: number } }).args;
+      const rec = recs.get(a.runId);
+      if (rec !== undefined) rec.status = a.status;
+      if (rec !== undefined) rec.t1 = a.t1;
+      return undefined;
+    });
+    h.setStorage('flows.get', async () => FLOW);
+    for (const op of ['runs.nodeRunStart', 'runs.nodeRunFinish', 'logs.append']) h.setStorage(op, async () => undefined);
+    return recs;
+  }
+
+  it('冷装载：boot→runs.list→taskCenterDeps.listRuns 同步快照（真 runs.list 数据面——A2 遗留1：() => [] 空集已替换）', async () => {
+    const { rt, h } = makeRuntime();
+    wireRunOps(h);
+    expect(rt.taskCenterDeps.listRuns()).toHaveLength(0); // boot 前=空快照（Provider 构造期冷面）
+    await rt.boot();
+    await vi.waitFor(() => {
+      expect(rt.taskCenterDeps.listRuns()).toHaveLength(1);
+    });
+    expect(rt.taskCenterDeps.listRuns()[0]).toMatchObject({ runId: 'r-pre', flowId: 'f-1', flowName: '装配流程', status: 'done' });
+  });
+
+  it('活跃集变化→runs.list 重读＋onRunsChanged 通知：startRun 活行入快照（running）→abortRun 收尾翻转（aborted）', async () => {
+    const { rt, h } = makeRuntime();
+    wireRunOps(h, false);
+    await rt.boot();
+    rt.registry.register(TRIGGER_DEF); // boot loadAll 全量替换后注册（装载前注册会被 reset 清掉）
+    rt.registry.register(CUSTOM_DEF);
+    const changed = vi.fn();
+    const unsub = rt.onRunsChanged(changed);
+
+    const handle = await rt.engine.startRun('f-1'); // spawn 挂起（无脚本事件——节点 running 到 kill）
+    expect(handle).not.toBeNull();
+    await vi.waitFor(() => {
+      // 活行入表：runs.create 落库＋runOpened 镜像→重读→快照含新 running 行
+      expect(rt.taskCenterDeps.listRuns().some((r) => r.runId === handle!.runId && r.status === 'running')).toBe(true);
+    });
+    expect(changed).toHaveBeenCalled(); // 通知面（AppShell 连接器→source.refresh 的驱动源）
+
+    rt.engine.abortRun(handle!.runId); // ■ 终止（收尾=drain→runs.finish(aborted)→runClosed 镜像→重读）
+    await vi.waitFor(() => {
+      expect(rt.taskCenterDeps.listRuns().find((r) => r.runId === handle!.runId)?.status).toBe('aborted');
+    });
+    unsub();
   });
 });

@@ -4,7 +4,8 @@
 //   （T6-17），本卡交付组件与上下文件。
 //   T6-11 增补：logs$ Bus（GlobalLogTab 数据面＋清空）；locate 定位原语（提供时 onGoto 经
 //   locate-run 脏闸编排——冻结形态 demo L2795-2797）；cron missed 提示 store（restoreRunState
-//   产出装配位）；lane 会话内存快照（mock 先行）。
+//   产出装配位）；lane 会话内存快照（✅ T6-16 复跑落位：真数据面=env:systemInfo lanes，经
+//   assembly/app-runtime 轮询缓存注入——mock 已解除）。
 //   P-3：零 IPC 直连、不 import canvas/workshop/settings/sky——activeFlowId/Esc 层级仲裁
 //   均为注入位（flowStore 只读投影由应用壳下发）。
 import {
@@ -41,7 +42,7 @@ export interface TaskCenterDeps extends RunsSourceDeps {
   logs?: LogsBus;
   /** 定位原语注入（T6-11——提供时 onGoto 经 locate-run 脏闸编排：dirty→toast 拒绝不切换） */
   locate?: LocateRunDeps;
-  /** lane 会话内存快照注入位（T6-11 §8① mock 先行——数据面随 C-M1 env:systemInfo lanes） */
+  /** lane 会话内存快照注入位（T6-11 §8①；T6-16 复跑：生产=env:systemInfo lanes 轮询缓存真数据） */
   laneMemories?(): readonly LaneMemory[];
 }
 

@@ -123,6 +123,52 @@ describe('§6.1h 流程日志（A-9.3：打开重放＋实时追加＋自动滚�
     }
   });
 
+  it('h5) 重放失败（logs.list reject）不丢重放在途缓冲的实时行——catch flush pending（T6-16 收口，batch-2 登记②）', async () => {
+    // 重放在途（replaying=true）到达的实时行进 pending 缓冲；重放 reject 时须 flush 保留，不静默丢弃。
+    let rejectReplay: ((e: Error) => void) | undefined;
+    const replayLogs = vi.fn(
+      (_flowId: string) =>
+        new Promise<LogLine[]>((_res, rej) => {
+          rejectReplay = rej;
+        }),
+    );
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const bus = createLogsBus();
+    await act(async () => {
+      root.render(
+        <FlowLogPanel flowId="f4" flowName="监控 UP 主" replayLogs={replayLogs} subscribeLogs={(fn) => bus.subscribe(fn)} onClose={vi.fn()} />,
+      );
+    });
+    try {
+      // 重放在途：实时行两行进 pending 缓冲（面板不即时显示=正常在途行为）
+      await act(async () => {
+        bus.publish(line({ msg: '在途行一' }));
+        bus.publish(line({ ts: '2026-11-11T03:00:01.000Z', msg: '在途行二' }));
+      });
+      expect(container.querySelectorAll('[data-log-line]').length).toBe(0); // 在途缓冲（重放未装载）
+
+      // 重放失败：catch 须 flush 缓冲行（不静默丢弃）
+      await act(async () => {
+        (rejectReplay as (e: Error) => void)(new Error('logs.list 不可达'));
+      });
+      const msgs = [...container.querySelectorAll('[data-log-msg]')].map((e) => e.textContent);
+      expect(msgs).toEqual(['在途行一', '在途行二']); // 缓冲行保留
+
+      // 失败后实时追加恢复正常（恰一次，接在保留行之后）
+      await act(async () => {
+        bus.publish(line({ ts: '2026-11-11T03:00:02.000Z', msg: '恢复行' }));
+      });
+      const msgsAfter = [...container.querySelectorAll('[data-log-msg]')].map((e) => e.textContent);
+      expect(msgsAfter).toEqual(['在途行一', '在途行二', '恢复行']);
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+    }
+  });
+
   it('h4) 形态：380×300（demo L543）＋空态文案（demo L2974 逐字）＋头部流程名＋✕ 关闭', async () => {
     const m = await mountPanel('f4', {}); // 无历史行
     try {

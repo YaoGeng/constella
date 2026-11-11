@@ -1,9 +1,13 @@
-// SeedsRunner —— 首启播种与增量补种（T1-03；02 §13.2；demo L1246-1255 语义源）。
+// SeedsRunner —— 首启播种与增量补种（T1-03；02 §13.2；demo L1246-1255 语义源；T6-18 渐进补种）。
 //
 // 职责：
 //   seed(conn)：12 内置定义（INSERT OR IGNORE——用户改过的不覆盖）＋按 seed_flags 逐流程
 //   按缺补种（f1~f9；用户数据一律不动）＋节点库首启 3 项（首启判定=seed_flags 无任何行；
 //   用户删除库条目不会被复活）。整个补种在单事务内。
+//   类型载体渐进（T6-18）：F5~F9 引用示例类型（xhs.*/gate.login/data.vault 等——nodes.type
+//   FK 依赖 node_definitions）；可用性=内置 12 ∪ 库内 definitions。示例类型未就位（无预装
+//   挂点的 bare 面）时该流暂缓播种且**不写 flag**——后续启次载体就位（ExamplePreloader
+//   预装）即补种；「按缺补种」粒度由 flag 表达、不因载体缺位误占位。
 //   ensureInitialVersions(conn)：无版本的流程补「初始版本」（快照取 nodes 镜像，edges 无镜像
 //   来源只能为空——常规路径 flows.create/种子均已带版本，此为防御面，02 §13.1/demo L3102-3107）。
 import type { DbConnection } from '../engine/connection';
@@ -40,18 +44,28 @@ const INSERT_SEED_FLAG = 'INSERT INTO seed_flags (flow_id, seeded_at) VALUES (:f
 const INSERT_LIBRARY = `INSERT INTO library_entries (id, name, type, params, script_meta, updated_at)
   VALUES (:id, :name, :type, :params, :script_meta, :updated_at)`;
 
-/** 播种/补种（幂等；增量按 seed_flags 逐流程判定——demo L1246-1255） */
+/** 播种/补种（幂等；增量按 seed_flags 逐流程判定——demo L1246-1255；载体可用性=T6-18） */
 export function seed(conn: DbConnection): void {
   conn.transaction(() => {
     // ① 12 内置定义：缺则补（用户/示例已改的零碰）
     const def = conn.prepare(INSERT_DEF);
     for (const d of BUILTIN_DEFINITIONS) def.run(toDefRow(d));
 
-    // ② 首启判定（库条目只随首启播种，避免删除后复活——「用户数据不动」）
+    // ② 首启判定（库条目只随首启播种，避免删除后复活——「用户数据不动」）。
+    //    T6-18 修正：v2 刷新可把 seed_flags 清空（9 流全未改动的既有库）——仅凭 flag 空
+    //    会误判首启、按固定 id 重插 library 撞主键；真首启=flag 空 ∧ library 表空
+    //    （用户后删全部库条目时 flag 已在位，复活保证不破）。
     const flagCount = conn.prepare('SELECT COUNT(*) AS c FROM seed_flags').get() as { c: number };
-    const firstBoot = flagCount.c === 0;
+    const libCount = conn.prepare('SELECT COUNT(*) AS c FROM library_entries').get() as { c: number };
+    const firstBoot = flagCount.c === 0 && libCount.c === 0;
 
-    // ③ 流程按缺补种（seed_flags 逐流程粒度）
+    // ③ 类型载体可用性（T6-18 渐进补种面）：内置 12 ∪ 库内 definitions（含预装示例 10）
+    const available = new Set<string>(BUILTIN_DEFINITIONS.map((d) => d.type));
+    for (const row of conn.prepare('SELECT type FROM node_definitions').all() as Array<{ type: string }>) {
+      available.add(row.type);
+    }
+
+    // ④ 流程按缺补种（seed_flags 逐流程粒度；类型未就位=暂缓且不占 flag）
     const hasFlag = conn.prepare('SELECT 1 AS ok FROM seed_flags WHERE flow_id = :flow_id');
     const insFlow = conn.prepare(INSERT_FLOW);
     const insNode = conn.prepare(INSERT_NODE);
@@ -63,6 +77,11 @@ export function seed(conn: DbConnection): void {
       if (done !== undefined) {
         orderIdx += 1;
         continue;
+      }
+      const typesReady = f.nodes.every((n) => available.has(n.type));
+      if (!typesReady) {
+        orderIdx += 1;
+        continue; // 载体未就位（bare 面无示例预装）——后续启次补种，不写 flag
       }
       const now = Date.now();
       insFlow.run({ id: f.id, name: f.name, order_idx: orderIdx, now });
@@ -92,7 +111,7 @@ export function seed(conn: DbConnection): void {
       orderIdx += 1;
     }
 
-    // ④ 节点库首启 3 项
+    // ⑤ 节点库首启 3 项
     if (firstBoot) {
       const insLib = conn.prepare(INSERT_LIBRARY);
       for (const lib of SEED_LIBRARY) {

@@ -1,8 +1,10 @@
 // SavePipeline —— 手动编辑器保存链（T6-09 / TDD-C-13 §3 SavePipeline 行＋§1 saveToLibrary
 // 签名；05 T6-09 卡链序逐环节）：validateDefinition（C-02 单一来源）→命名空间检查（C-05
-// hasType＋X-01 BUILTIN_TYPE_IDS 双查）→C-05 register→C-06 upsertDefinition→library.upsert
-// （含 lang/file 脚本元信息）→资产包落盘（C-08 同一导入链——「开发即沉淀」）；同名同型=
-// 覆盖不新增（A-11.1）。
+// hasType＋X-01 BUILTIN_TYPE_IDS 双查）→C-05 register→C-06 upsertDefinition→资产包落盘
+// （C-08 同一导入链——「开发即沉淀」）；同名同型=覆盖不新增（A-11.1）。
+// **library.upsert 单写=链内 ImportOrchestrator ⑥段**（T6-19 A1 遗留1 去重——原显式段与
+// 链内段每存两条；params 模板〔N3 default 投影〕经 assemble params 层随包入链，与 C-07
+// NodeDevAgent「✨new 步骤 params 随链消费」同形——实例层即入库数据源）。
 //
 //   导入形态（v1.0e 对齐——03 L1101 勘误注 2026-11-10 PM）：内存 zip bytes 直入
 // `importArchiveBytes`（confirm 自动放行——用户确认已在保存钮收口，A-10.2 不双收，同 T5-03
@@ -18,7 +20,6 @@
 // 同件注入——产物等价单一来源；本模块不 import workshop/zip 运行时件，仅 type 引 C-08 面）。
 // 校验投影复用 computeStepErrors（./definition-draft——环节门与保存门同一来源，防两套规则漂移）。
 import type { ExecSpec, NodeDefinition } from '@constella/shared/dsl';
-import type { LibraryEntry } from '@constella/shared/ipc';
 import type { ImportArchiveOpts, ImportResult } from '../zip/import-orchestrator';
 import { computeStepErrors } from './definition-draft';
 import type { ScriptDraft, StepErrors } from './definition-draft';
@@ -81,9 +82,7 @@ export interface SavePipelineDeps {
   register(doc: NodeDefinition): void;
   /** C-06 upsertDefinition（definitions.upsert 持久化——IpcDefinitionStore 半段） */
   upsertDefinition(doc: NodeDefinition): Promise<void>;
-  /** C-06 library.upsert（入库含 lang/file 脚本元信息——A-11.1） */
-  libraryUpsert(entry: LibraryEntry): Promise<void>;
-  /** C-08 导入链（资产包落盘 node-types/——bytes 直入恰一次） */
+  /** C-08 导入链（资产包落盘 node-types/＋library.upsert 单写⑥段——bytes 直入恰一次） */
   importer: SaveImportFace;
 }
 
@@ -138,18 +137,14 @@ function isUnsafeEntryName(name: string): boolean {
   );
 }
 
-/** library 条目参数模板（N3 default 投影——新建实例的预填底数；无 default 键不落） */
+/** library 条目参数模板（N3 default 投影——新建实例的预填底数；无 default 键不落。
+ *  T6-19 起经 assemble params 层随包入链（链内 ⑥段入库数据源——与 C-07 ✨new 预填同形）。 */
 function paramsTemplateOf(doc: NodeDefinition): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const p of doc.paramsSchema) {
     if (p.default !== undefined) out[p.k] = p.default;
   }
   return out;
-}
-
-let libSeq = 0;
-function newLibraryEntryId(): string {
-  return `lib-${Date.now().toString(36)}-${(libSeq++).toString(36)}`;
 }
 
 export function createSavePipeline(deps: SavePipelineDeps): NodeEditorSavePipeline {
@@ -220,21 +215,16 @@ export function createSavePipeline(deps: SavePipelineDeps): NodeEditorSavePipeli
       // ———— ⑤ C-06 upsertDefinition（definitions.upsert 持久化） ————
       await deps.upsertDefinition(savedDoc);
 
-      // ———— ⑥ library.upsert（入库——含 lang/file 脚本元信息，§4 library_entries 条目形） ————
-      await deps.libraryUpsert({
-        id: newLibraryEntryId(),
-        name: savedDoc.meta.name,
-        type: savedDoc.type,
-        params: paramsTemplateOf(savedDoc),
-        // 无脚本=空占位（与 C-06 DAO rowToEntry 缺省同形——import-orchestrator ⑥段同款）
-        scriptMeta: exec !== null ? { lang: exec.lang, file: exec.file } : { lang: 'ts', file: '' },
-        updatedAt: Date.now(),
-      });
+      // ———— ⑥（已去重——T6-19 A1 遗留1）library.upsert 单写=链内 ImportOrchestrator ⑥段：
+      //     params 模板（N3 default 投影）经下方 assemble params 层随包入链；scriptMeta 由链内
+      //     manifest 映射推导（强节点 {lang,file}／无脚本空占位——原显式段同形） ————
 
       // ———— ⑦ 产物三件组 zip（组装器注入——真件=T5-03 assembleNodePackage 同件，zip 布局
-      //     对齐 C-07〔§6.3 diff 零红线〕；P-3 本模块不 import workshop） ————
+      //     对齐 C-07〔§6.3 diff 零红线〕；params=N3 default 模板——nodes/*.json 实例层，
+      //     入库/落节点随链消费；P-3 本模块不 import workshop） ————
       const pkg = deps.assemble({
         definition: savedDoc,
+        params: paramsTemplateOf(savedDoc),
         ...(scriptFile !== undefined && scriptCode !== undefined && lang !== null
           ? { script: { file: scriptFile, lang, entry: 'run', code: scriptCode } }
           : {}),

@@ -35,6 +35,7 @@ import { useCanvasStore } from '../canvas/canvas-store';
 import { useFlowStore } from '../canvas/stores/flow-store';
 import { layout as dagreLayout } from '../canvas/layout/layout-engine';
 import {
+  assembleNodePackage,
   createFlowMaterializer,
   createFlowPlanner,
   createIntentRouter,
@@ -46,12 +47,15 @@ import {
   type LlmGateway,
   type NodeDevAgent,
 } from '../workshop';
+import { createSavePipeline } from '../node-editor';
+import type { NodeEditorSavePipeline } from '../node-editor';
 import { createImportOrchestrator } from '../zip/import-orchestrator';
 import type { InstallConfirmData } from '../market/install-confirm';
 import { createLandEdgesBinder } from './land-edges';
 import { createMarketAssembly, type MarketAssembly } from './market-assembly';
 import { createLogReplayService, createReplayStorage, type LogReplayService } from '../taskcenter/log-replay-service';
 import { createLogsBus, type LogsBus } from '../taskcenter/runs-bus';
+import { runRecordFromSummary, type TaskRunRecord } from '../taskcenter/run-row';
 import type { TaskCenterDeps } from '../taskcenter/task-center-context';
 import { useSettingsStore } from '../settings';
 import { createCdpSessionsModel, createLaneProjector, createPreloadCdpChannels } from '../cdp';
@@ -162,7 +166,11 @@ export interface AppRuntime {
   };
   logsBus: LogsBus;
   replay: LogReplayService;
+  /** C-13 手动编辑器保存链（T6-16 生产接线——AppShell 经 bindNodeEditorEntryDeps 下发 DrawerShell「手动定义」入口） */
+  nodeEditor: { savePipeline: NodeEditorSavePipeline };
   taskCenterDeps: TaskCenterDeps;
+  /** runs 记录快照变化通知（T6-19 ②——AppShell 连接器→TaskCenter source.refresh 驱动位） */
+  onRunsChanged(fn: () => void): () => void;
   viewport: ViewportFace;
   /** 视口 instance 绑定（CanvasChrome onInit→此处；卸载传 null） */
   bindViewport(instance: ViewportInstanceFace | null): void;
@@ -203,7 +211,10 @@ export function createAppRuntime(deps: AppRuntimeDeps): AppRuntime {
   const engine = createRunEngine({
     storage,
     registry,
-    guardDirty: (flowId) => useFlowStore.getState().guardDirty(`run:${flowId}`),
+    // 脏闸=dirty 位直投影（RunEngineDeps 语义「true=有未保存改动」——demo L1792 dirty 即拒、
+    // 无确认链；flowStore.guardDirty(action) 是「true=放行」的确认链反义面，T6-17 接线曾反接
+    // ——经 T6-19 手动运行链接线暴露修正）
+    guardDirty: (_flowId) => useFlowStore.getState().dirty,
     transport,
     notify,
   });
@@ -297,11 +308,84 @@ export function createAppRuntime(deps: AppRuntimeDeps): AppRuntime {
     getDefinition: (t) => registry.get(t),
   });
 
+  // ———— C-13 保存链生产构造（T6-16 生产接线——SavePipelineDeps 真件全绑定） ————
+  //   importer=保存链专用导入编排：canvasSink no-op（入库保存不落画布——T6-09 契约 harness 同形；
+  //   落图归 C-07 adoptDraft/C-09 安装链各自面）；「开发即沉淀」＝资产落盘/定义/注册表同链。
+  //   P-3：assemble=workshop assembleNodePackage 经构造注入传真件——assembly=合法跨模块点
+  //   （node-editor 不 import workshop 不变量不变）；零新通道（definitions.upsert/library.upsert/
+  //   zip:import 均既有面）。
+  const definitionStore = new IpcDefinitionStore(storage);
+  const savePipeline = createSavePipeline({
+    assemble: assembleNodePackage,
+    hasType: (t) => registry.has(t),
+    register: (doc) => registry.register(doc),
+    upsertDefinition: (doc) => definitionStore.upsertDefinition(doc),
+    // library.upsert 单写=链内 ImportOrchestrator ⑥段（T6-19 A1 遗留1 去重——显式段已去）
+    importer: createImportOrchestrator({
+      bridge: { zipImport: (payload) => api.zipImport(payload), storageInvoke: (req) => api.storageInvoke(req) },
+      registry: { has: (t) => registry.has(t), register: (doc) => registry.register(doc) },
+      validate: validateDefinition,
+      canvasSink: { dropNodes: () => [], markDirty: () => undefined }, // 入库保存零落图零脏标记
+      viewportCenter,
+      log,
+    }),
+  });
+
   // ———— 日志双路（logs$ Bus＝engine.onRunLog 单点 publish）＋重放服务（启动序 restoreRunState） ————
   const logsBus = createLogsBus((fn) => engine.onRunLog(fn));
   const replay = createLogReplayService({
     storage: createReplayStorage(storage),
     restoreMirror: (flowId, runId, statuses) => useRunStore.getState().restoreRun(flowId, runId, statuses),
+  });
+
+  // ———— 活行入表/收尾刷新装配（T6-19 ②——A2 线遗留1；runs-source「listRuns 冷装载/refresh
+  //     收尾刷新」注入位设计的生产消费面） ————
+  //   listRuns=同步快照（boot 冷装载 runs.list 灌入）；活跃集变化（runOpened/runClosed——
+  //   RunEngine 事件管线同点镜像写入，02 §3.3）→ runs.list 重读（runs.create/finish 已同点
+  //   落库）→ 快照替换＋onRunsChanged 通知 → AppShell 连接器 source.refresh（runs$ 重投影：
+  //   活跃 run 入任务表、收尾行状态翻转）。重读失败保持上次快照（不阻塞）；statuses 级镜像
+  //   写不入驱动面（runs-source 已订阅 runStore 自行重投影）。
+  let runsRecords: readonly TaskRunRecord[] = [];
+  const runsListeners = new Set<() => void>();
+  let runsReloadInFlight = false;
+  let runsReloadQueued = false;
+  const reloadRuns = (): void => {
+    if (runsReloadInFlight) {
+      runsReloadQueued = true;
+      return;
+    }
+    runsReloadInFlight = true;
+    void storage
+      .invoke('runs.list', undefined)
+      .then((res) => {
+        // statuses 保留合并：既有快照（restore 装载/前次重读）的终态投影不因 runs.list 无
+        // statuses 而丢（进度列数据源）
+        runsRecords = res.items.map((s) => {
+          const prev = runsRecords.find((r) => r.runId === s.id);
+          return { ...runRecordFromSummary(s), ...(prev?.statuses !== undefined ? { statuses: prev.statuses } : {}) };
+        });
+        for (const fn of [...runsListeners]) fn();
+      })
+      .catch((err) => {
+        /* 读失败保持上次快照（X-3 方向：不阻塞）——留一行日志（T6-16 终审 M-4：降级不静默） */
+        log('[app-runtime] runs.list reload failed (keep last snapshot):', err);
+      })
+      .finally(() => {
+        runsReloadInFlight = false;
+        if (runsReloadQueued) {
+          runsReloadQueued = false;
+          reloadRuns();
+        }
+      });
+  };
+  const activeRunKey = (m: Readonly<Record<string, string>>): string =>
+    [...Object.entries(m)].sort().map(([f, r]) => `${f}=${r}`).join('|');
+  let lastActiveRunKey = activeRunKey(useRunStore.getState().activeRunOfFlow);
+  const unsubRunSet = useRunStore.subscribe((s) => {
+    const key = activeRunKey(s.activeRunOfFlow);
+    if (key === lastActiveRunKey) return; // statuses 级写（lastRunOfFlow 变更）不触发重读
+    lastActiveRunKey = key;
+    reloadRuns();
   });
 
   // ———— C-04 管理面投影（LaneProjector.portsOf 数据源——refresh 轮询驱动） ————
@@ -375,11 +459,19 @@ export function createAppRuntime(deps: AppRuntimeDeps): AppRuntime {
     save: { orchestrator: saveOrchestrator, scheduler: autoSaveScheduler, manual: saveManual },
     logsBus,
     replay,
+    nodeEditor: { savePipeline },
     viewport: viewportHolder.face,
     bindViewport: (instance) => viewportHolder.bind(instance),
+    onRunsChanged(fn) {
+      runsListeners.add(fn);
+      return () => {
+        runsListeners.delete(fn);
+      };
+    },
     taskCenterDeps: {
-      // 冷装载=空集：启动序 restoreRunState→setRuns 驱动（T6-11 装配形态——AppShell Restore 连接器）
-      listRuns: () => [],
+      // 冷装载=boot() runs.list 灌入的同步快照（T6-19 ②——A2 遗留1：() => [] 空集已替换；
+      // 活跃集变化重读＋通知→AppShell 连接器 source.refresh——见上方装配段）
+      listRuns: () => runsRecords,
       runStore: useRunStore,
       portsOf: (runId) => laneProjector.portsOf(runId),
       nodeName: (flowId, nodeId) => replay.nodeName(flowId, nodeId),
@@ -399,8 +491,9 @@ export function createAppRuntime(deps: AppRuntimeDeps): AppRuntime {
       laneMemories: () => laneMemories,
     },
     async boot() {
-      const report = await registry.loadAll(new IpcDefinitionStore(storage), validateDefinition);
+      const report = await registry.loadAll(definitionStore, validateDefinition);
       log(`[app-runtime] registry loaded: total=${report.total} loaded=${report.loaded} broken=${report.broken.length}`);
+      reloadRuns(); // runs 记录冷装载（T6-19 ②——listRuns 快照数据面）
       refreshBackground();
       if (pollTimer === null) pollTimer = setInterval(refreshBackground, POLL_MS);
       onlineHintUnsub = market.wireOnlineHint();
@@ -412,6 +505,8 @@ export function createAppRuntime(deps: AppRuntimeDeps): AppRuntime {
       }
       onlineHintUnsub?.();
       onlineHintUnsub = null;
+      unsubRunSet();
+      runsListeners.clear();
       unsubFlowChanges();
       autoSaveScheduler.cancel();
       engine.dispose();

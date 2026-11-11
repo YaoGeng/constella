@@ -83,6 +83,9 @@ export interface FlowState {
   applySnapshot(doc: FlowDoc): void;
   /** 保存周期 onSaved（SaveOrchestrator ctx.onSaved＝清栈+换基线+dirty 复位）。 */
   markSaved(_versionId: string): void;
+  /** 取消＝还原到上次保存点（T6-19——demo doCancel L1647：基线快照回放＋清栈＋dirty 复位；
+   *  name 不回滚——基线不含 name 且 V1 无流程改名面）。 */
+  restoreBaseline(): void;
   // —— 脏标记管线（A-5.1）——
   markDirty(): void;
   guardDirty(action: string): boolean;
@@ -220,6 +223,11 @@ export const useFlowStore = create<FlowState>()(
       markSaved: () => {
         const { nodes, edges } = get();
         set({ dirty: false, baseline: snapshotOf(nodes, edges) });
+        useFlowStore.temporal.getState().clear();
+      },
+      restoreBaseline: () => {
+        const snap = JSON.parse(get().baseline) as FlowHistorySlice;
+        set({ nodes: snap.nodes, edges: snap.edges, dirty: false });
         useFlowStore.temporal.getState().clear();
       },
 

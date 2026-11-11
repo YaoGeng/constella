@@ -56,7 +56,12 @@ export function FlowLogPanel({ flowId, flowName = '', replayLogs, subscribeLogs,
         setLines([...replayed, ...pending]);
       })
       .catch(() => {
-        if (!cancelled) replayingRef.current = false; // 重放失败保持空面（宿主可重试——不炸面板）
+        // 重放失败不炸面板（宿主可重试）；重放在途缓冲的实时行 flush 保留——不静默丢弃（T6-16 收口，batch-2 登记②）
+        if (!cancelled) {
+          replayingRef.current = false;
+          setLines(pendingRef.current); // catch flush：缓冲行照常上屏（无重放行可合并，全量保留）
+          pendingRef.current = [];
+        }
       });
     return () => {
       cancelled = true;

@@ -6,7 +6,7 @@
 //
 // 备份时点规则：仅当库已有迁移历史（applied 非空）才备份——首启空库应用 v1 无数据可失；
 // v1→v2 级联升级时在应用 v2 前生成 pre-v2-<date>.db（§6.1e 断言面）。
-import { readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import type { DbConnection } from '../engine/connection';
 import type { Migration } from './migrations';
@@ -114,6 +114,9 @@ export function migrate(
   const appliedSet = new Set(applied);
   const keep = opts.keepBackups ?? 5;
   const backups: string[] = [];
+  // 备份目录就位（T6-18 修复：v2 入序列后首启也会走到备份位——VACUUM INTO 不建目录，
+  // 此前单迁移首启永不触发备份路径未暴露；runner 自持备份面，目录归此处创建）
+  if (opts.backupsDir !== undefined) mkdirSync(opts.backupsDir, { recursive: true });
   const fromVersion = applied.length > 0 ? (applied[applied.length - 1] as number) : 0;
   let current = fromVersion;
   let alreadyApplied = false;

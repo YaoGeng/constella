@@ -10,9 +10,11 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import type { LogLevel } from '@constella/shared/ipc';
 import { CanvasChrome, type CanvasChromeProps } from '../canvas';
 import { CanvasRegistryContext } from '../canvas/registry-context';
+import { bindNodeEditorEntryDeps } from '../canvas/drawer/DrawerShell';
 import { useCanvasToast } from '../canvas/toast';
 import { useCanvasStore } from '../canvas/canvas-store';
 import { useFlowStore } from '../canvas/stores/flow-store';
+import { useRunStore } from '../run';
 import { SkyBackground } from '../sky';
 import {
   attachSettingsStorage,
@@ -85,6 +87,14 @@ function TaskCenterRestore({ runtime }: { runtime: AppRuntime }) {
   return null;
 }
 
+/** 活行入表/收尾刷新连接器（T6-19 ②——runtime runs 记录快照变化→source.refresh 重投影：
+ *  RunEngine 活跃集变化→runs.list 重读→通知（活跃 run 入任务表、收尾行状态翻转）） */
+function TaskCenterLiveRuns({ runtime }: { runtime: AppRuntime }) {
+  const handle = useTaskCenter();
+  useEffect(() => runtime.onRunsChanged(() => handle?.source.refresh()), [runtime, handle]);
+  return null;
+}
+
 export interface AppShellProps {
   runtime: AppRuntime;
   /** InstallConfirm 命令式宿主（confirm 真注入的 UI 半段；缺省=不挂确认框〔仅测试〕） */
@@ -117,6 +127,35 @@ export function AppShell({ runtime, confirmHost, notifyHost }: AppShellProps) {
 
   const activeFlowId = useFlowStore((s) => s.activeFlowId);
   const flowName = useFlowStore((s) => s.name);
+  const dirty = useFlowStore((s) => s.dirty);
+  // 当前流程运行中位（runStore.activeRunOfFlow 只读投影——demo L1622 running=runningRunOf(activeFlow)）
+  const running = useRunStore((s) => (activeFlowId !== null ? s.activeRunOfFlow[activeFlowId] !== undefined : false));
+
+  // ———— header 运行按钮组（T6-19 ①——walk 上线级阻断②；demo canvasHead L637-647 最小面） ————
+  //   ▶运行＝当前流程 engine.startRun（闸内建：dirty/重复/触发节点违例＝engine toast 拒绝，
+  //   demo L1788-1796）；■终止＝当前活跃 run abortRun（demo L1957）；保存＝既有 saveManual 链
+  //   （demo L1638-1645）；取消＝还原到上次保存点（demo L1647-1654）。undo/redo/版本下拉＝V2
+  //   维持登记（NOTE-5）不装配。
+  const onRunClicked = useCallback((): void => {
+    if (activeFlowId === null) return;
+    void runtime.engine.startRun(activeFlowId, { source: 'manual' }).then((handle) => {
+      if (handle !== null) useCanvasStore.getState().closeDrawer(); // 闸过才收抽屉（demo L1805 序）
+    });
+  }, [runtime, activeFlowId]);
+  const onStopClicked = useCallback((): void => {
+    if (activeFlowId === null) return;
+    const runId = useRunStore.getState().activeRunOfFlow[activeFlowId];
+    if (runId !== undefined) runtime.engine.abortRun(runId); // demo L1957 btnStop→abortRun(runningRunOf)
+  }, [runtime, activeFlowId]);
+  const onSaveClicked = useCallback((): void => runtime.save.manual(), [runtime]);
+  const onCancelClicked = useCallback((): void => {
+    const st = useFlowStore.getState();
+    if (!st.dirty) return; // demo L1648
+    st.restoreBaseline(); // 基线回放＋清栈＋dirty 复位（canvas 域注入位——demo doCancel L1649-1650）
+    useCanvasStore.getState().setSelection(null); // demo L1651
+    useCanvasStore.getState().closeDrawer();
+    toast('已还原到上次保存'); // demo L1653 逐字
+  }, [toast]);
 
   // ———— 设置装配（T6-12 启动序：attach+load→dispatcher.install 两加载序回放＋初始应用） ————
   // scheduler=runtime AutoSaveScheduler 实例（autoSave 开→schedule 门控真实生效——PM 补接线）
@@ -154,6 +193,13 @@ export function AppShell({ runtime, confirmHost, notifyHost }: AppShellProps) {
     };
   }, [runtime, dispatcher]);
 
+  // ————「手动定义」保存链生产接线（T6-16——runtime.nodeEditor.savePipeline 经 DrawerShell
+  //     入口 deps 下发；卸载解绑＝未装配 disabled 态回归，notifyHost.bind 同款生命周期） ————
+  useEffect(() => {
+    bindNodeEditorEntryDeps({ savePipeline: runtime.nodeEditor.savePipeline });
+    return () => bindNodeEditorEntryDeps(null);
+  }, [runtime]);
+
   // ————「让 AI 开发」跳工坊事件（DrawerShell CustomEvent 锚——P-3 无 import 边） ————
   useEffect(() => {
     const onOpenWorkshop = (ev: Event): void => {
@@ -190,6 +236,7 @@ export function AppShell({ runtime, confirmHost, notifyHost }: AppShellProps) {
       <div data-shell="root" className="relative z-[1] flex h-full flex-col">
         <TaskCenterProvider deps={runtime.taskCenterDeps}>
           <TaskCenterRestore runtime={runtime} />
+          <TaskCenterLiveRuns runtime={runtime} />
           {/* 顶栏导航（demo L590-612 topbar 最小面——视觉对齐移交 T6-16） */}
           <header data-shell="topbar" className="flex items-center gap-2 border-b border-[var(--line)] bg-[var(--glass)] px-3 py-2 backdrop-blur-[10px]">
             <b data-shell="brand" className="text-sm text-[var(--tx)]">
@@ -241,6 +288,46 @@ export function AppShell({ runtime, confirmHost, notifyHost }: AppShellProps) {
               </button>
             </nav>
             <div className="ml-auto flex items-center gap-2">
+              {/* 运行按钮组（demo canvasHead L637-647 段——dirty 亮灭 L1300-1315、运行互斥
+                  L1621-1631 syncModeUI；保存 toast「已保存到本地」L1643 冻结文案） */}
+              <div data-shell="run-controls" className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  data-shell-btn="save"
+                  disabled={!dirty}
+                  className="rounded-md px-2 py-1 text-xs text-[var(--tx-2)] hover:bg-[var(--accent-tint)] hover:text-[var(--accent-hi)] disabled:opacity-40"
+                  onClick={onSaveClicked}
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  data-shell-btn="cancel"
+                  disabled={!dirty}
+                  className="rounded-md px-2 py-1 text-xs text-[var(--tx-2)] hover:bg-[var(--accent-tint)] hover:text-[var(--accent-hi)] disabled:opacity-40"
+                  onClick={onCancelClicked}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  data-shell-btn="run"
+                  disabled={running || activeFlowId === null}
+                  className="rounded-md bg-[var(--accent-tint)] px-2.5 py-1 text-xs text-[var(--accent-hi)] hover:brightness-110 disabled:opacity-40"
+                  onClick={onRunClicked}
+                >
+                  ▶ 运行
+                </button>
+                <button
+                  type="button"
+                  data-shell-btn="stop"
+                  disabled={!running}
+                  className="rounded-md px-2.5 py-1 text-xs text-[var(--red)] hover:bg-[var(--accent-tint)] disabled:opacity-40"
+                  onClick={onStopClicked}
+                >
+                  ■ 终止
+                </button>
+              </div>
               {autoSaveOn && (
                 <span data-shell="autosave-badge" className="rounded border border-[var(--accent-line)] bg-[var(--accent-tint)] px-1.5 py-0.5 text-[10px] leading-4 text-[var(--accent-hi)]">
                   自动保存

@@ -16,7 +16,8 @@
 // nodes 表为 FK 支撑/列表镜像（saveFlow 事务内镜像重写，T1-06）。
 import type { DbConnection } from '../engine/connection';
 
-/** 单个迁移（已发布禁改——C-06 §8 扩展点①：V1.1 新表/新列一律走新版本） */
+/** 单个迁移（已发布禁改——C-06 §8 扩展点①：新表/新列一律走新版本；数据迁移形态随 T6-18
+ *  PM 追认 2026-11-11 增设——v2 为首例：只清「未改动」的种子数据行，DDL/契约面零变化） */
 export interface Migration {
   version: number;
   name: string;
@@ -191,5 +192,51 @@ CREATE TABLE pending_publish (
   },
 };
 
+/**
+ * v2：种子流程刷新（T6-18；数据迁移形态——PM 追认 2026-11-11）。
+ *
+ * 背景：T6-16 walk 上线级阻断①——旧种子 f1~f9 为 2~3 节点最小流程且 f4/f5/f8 无触发节点
+ * （不可运行），与 demo L1080-1226 构架/01 §9 D-8 剧本不符；种子内容已在代码侧重制
+ * （seed-data.ts）。seed_flags 逐流程幂等策略下，仅改种子内容对既有 dev 库不生效——本迁移
+ * 清「未改动」旧种子行（flag＋流程行），随后 open 装配序内 seed() 按缺补种重写为新构架。
+ * v1 DDL 禁改不动（序列前缀校验天然兼容）；首启空库本迁移为空操作。
+ *
+ * 「未改动」判定（保守——用户数据一律不动，任一命中即整流保留）：
+ *   - flow 行在位且 soft_del=0（用户软删的种子不复活——flows.delete=软删）；
+ *   - created_at = updated_at（种子写入两值同源；rename/save 均会推 updated_at）；
+ *   - 版本栈只有种子初始版本 `${fid}-v0` 一行（手动/自动/工坊保存都追加版本行）；
+ *   - 无 runs 行（run 历史 FK 引用 nodes/flows——历史保留优先于刷新）。
+ *
+ * 载体渐进面：bare 库（无示例预装挂点）刷新后 f5~f9 由 seed() 暂缓（示例类型未就位不写
+ * flag），待 ExamplePreloader 预装后自动补种——与首启路径同语义（T6-18）。
+ */
+export const V2_SEED_REFRESH: Migration = {
+  version: 2,
+  name: 'v2-seed-flows-refresh-t6-18',
+  up: (conn) => {
+    // 目标流程=旧种子 f1~f9（字面冻结——本迁移语义随发布定形，不随 SEED_FLOWS 演进漂移）
+    const FLOW_IDS = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9'] as const;
+    const untouched = conn.prepare(
+      `SELECT 1 AS ok FROM flows
+       WHERE id = :fid AND soft_del = 0 AND created_at = updated_at
+         AND (SELECT COUNT(*) FROM flow_versions WHERE flow_id = :fid) = 1
+         AND EXISTS (SELECT 1 FROM flow_versions WHERE flow_id = :fid AND id = :fid || '-v0')
+         AND NOT EXISTS (SELECT 1 FROM runs WHERE flow_id = :fid)`,
+    );
+    const delVersions = conn.prepare('DELETE FROM flow_versions WHERE flow_id = :fid');
+    const delNodes = conn.prepare('DELETE FROM nodes WHERE flow_id = :fid');
+    const delFlag = conn.prepare('DELETE FROM seed_flags WHERE flow_id = :fid');
+    const delFlow = conn.prepare('DELETE FROM flows WHERE id = :fid');
+    for (const fid of FLOW_IDS) {
+      if (untouched.get({ fid }) === undefined) continue;
+      // 删序=FK 依赖序（versions→nodes→flows；flag 无 FK）——无 CASCADE，应用层显式连带删（C-06 §4④）
+      delVersions.run({ fid });
+      delNodes.run({ fid });
+      delFlow.run({ fid });
+      delFlag.run({ fid });
+    }
+  },
+};
+
 /** 已发布迁移序列（单调递增；禁改既有项，新变更只追加——C-06 §8①） */
-export const MIGRATIONS: readonly Migration[] = [V1_BASELINE];
+export const MIGRATIONS: readonly Migration[] = [V1_BASELINE, V2_SEED_REFRESH];

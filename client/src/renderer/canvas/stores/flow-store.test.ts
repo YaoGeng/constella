@@ -137,6 +137,21 @@ describe('保存周期（A-5.2）', () => {
     expect(useFlowStore.getState().dirty).toBe(true);
     expect(useFlowStore.getState().serialize()).toEqual(other);
   });
+
+  it('restoreBaseline（取消钮——T6-19：demo doCancel L1647 语义）＝基线回放＋清栈＋dirty 复位', () => {
+    useFlowStore.getState().loadFlow('f1', docFactory());
+    appendNode(1);
+    appendNode(2);
+    expect(useFlowStore.getState().dirty).toBe(true);
+    expect(pastStates().length).toBeGreaterThan(0);
+    useFlowStore.getState().restoreBaseline();
+    expect(useFlowStore.getState().nodes.length).toBe(3); // 回到上次保存点（基线快照）
+    expect(useFlowStore.getState().dirty).toBe(false);
+    expect(pastStates().length).toBe(0); // 清历史栈（撤销历史只跨「一次保存周期」——demo L1642/1650）
+    expect(futureStates().length).toBe(0);
+    useFlowStore.getState().undo(); // 清栈后 undo 无操作
+    expect(useFlowStore.getState().nodes.length).toBe(3);
+  });
 });
 
 describe('S-1 ④ partialize/equality 回归（重点）', () => {

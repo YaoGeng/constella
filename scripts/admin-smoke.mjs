@@ -1035,6 +1035,7 @@ async function runDashboardScenarios(page, origin, baseUrl) {
   );
 
   // d) console 断言：a~c 交互全程无 [antd: Statistic] valueStyle 弃用告警（S-8 告警复测，脚本检查）
+  // dev 断言口径：dist 下 valueStyle 告警可能不出现（生产编译剔除 devUseWarning 分支，dist assets 实测无 [antd: Statistic] 告警串），断言不构成 V1 发布门
   const deprecation = consoleTexts.filter((t) => t.includes('valueStyle'));
   report(
     'd) console 断言无 [antd: Statistic] valueStyle 告警',

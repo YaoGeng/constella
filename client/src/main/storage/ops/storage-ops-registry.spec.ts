@@ -45,7 +45,7 @@ describe.each(TEST_ENGINES)('storage ops registry [%s]', (engine: DbEngine) => {
       const ops = layer.ops;
 
       const list = ops.invoke('flows.list') as { items: Array<{ id: string; name: string }> };
-      expect(list.items).toHaveLength(9);
+      expect(list.items).toHaveLength(4); // bare 面种子=f1~f4（T6-18：F5~F9 待示例载体渐进补种）
       const first = list.items[0] as { id: string; name: string };
       const doc = ops.invoke('flows.get', { id: first.id }) as { name: string; nodes: unknown[] };
       expect(doc.name).toBe(first.name);
@@ -171,11 +171,11 @@ describe.each(TEST_ENGINES)('storage ops registry [%s]', (engine: DbEngine) => {
       const ops = layer.ops;
       ops.invoke('settings.set', { key: 'snap', value: false });
       ops.invoke('flows.softDelete', { id: 'f1' });
-      expect((ops.invoke('flows.list') as { items: unknown[] }).items).toHaveLength(8);
+      expect((ops.invoke('flows.list') as { items: unknown[] }).items).toHaveLength(3);
 
       ops.invoke('settings.factoryReset');
 
-      expect((ops.invoke('flows.list') as { items: unknown[] }).items).toHaveLength(9);
+      expect((ops.invoke('flows.list') as { items: unknown[] }).items).toHaveLength(4);
       expect(ops.invoke('settings.getAll')).toEqual({}); // 用户数据清除
       // 重种后连接可用（经 DAO 面读写）
       ops.invoke('settings.set', { key: 'autoSave', value: true });

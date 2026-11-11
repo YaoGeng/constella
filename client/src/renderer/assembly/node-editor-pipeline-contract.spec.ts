@@ -53,20 +53,19 @@ interface RealHarness {
   dir: string;
   layer: StorageLayer;
   registered: Map<string, NodeDefinition>;
-  libCalls: Array<{ name: string; type: string; scriptMeta: { lang: 'python' | 'ts'; file: string } }>;
   storageCalls: Array<{ op: string }>;
   importArchiveBytes: ReturnType<typeof vi.fn>;
   save: ReturnType<typeof createSavePipeline>;
   hasType(t: string): boolean;
 }
 
-/** 真导入链＋真存储＋SavePipeline 真件 deps（register/upsertDefinition/libraryUpsert=真面绑定） */
+/** 真导入链＋真存储＋SavePipeline 真件 deps（register/upsertDefinition=真面绑定；library.upsert
+ *  经链内 ⑥段 bridge.storageInvoke 路由真 DAO——T6-19 单写断言面） */
 function makeRealHarness(sub: string): RealHarness {
   const dir = path.join(tmp, sub);
   const layer = new StorageLayer(SQLITE_ENGINE);
   layer.open(dir);
   const registered = new Map<string, NodeDefinition>();
-  const libCalls: RealHarness['libCalls'] = [];
   const storageCalls: RealHarness['storageCalls'] = [];
   const hasType = (t: string): boolean =>
     (BUILTIN_TYPE_IDS as readonly string[]).includes(t) || layer.dao.definitions.loadAll().some((d) => d.type === t);
@@ -90,6 +89,10 @@ function makeRealHarness(sub: string): RealHarness {
       zipImport: async (req) => await pipeline(req), // 同进程直调真管线（零真 IPC——注入 seam 面）
       storageInvoke: async (req) => {
         storageCalls.push({ op: req.op });
+        // library.upsert 路由真 DAO（T6-19 单写断言面——二连保存真库行恰一）
+        if (req.op === 'library.upsert') {
+          layer.dao.library.upsert(req.args.entry);
+        }
         return undefined;
       },
     },
@@ -114,12 +117,9 @@ function makeRealHarness(sub: string): RealHarness {
     upsertDefinition: async (doc) => {
       await layer.dao.definitions.upsert(doc);
     },
-    libraryUpsert: async (entry) => {
-      libCalls.push({ name: entry.name, type: entry.type, scriptMeta: entry.scriptMeta });
-    },
     importer: { importArchiveBytes },
   };
-  return { dir, layer, registered, libCalls, storageCalls, importArchiveBytes, save: createSavePipeline(deps), hasType };
+  return { dir, layer, registered, storageCalls, importArchiveBytes, save: createSavePipeline(deps), hasType };
 }
 
 /** 真读端：zip bytes → Map<条目名, 文本>（脚本/config/manifest 均文本资产） */
@@ -224,9 +224,11 @@ describe('§6.3 两路径等价（C-13 SavePipeline ↔ C-07 NodeDevAgent——D
     for (const [name, content] of zipC07) {
       const c13Content = zipC13.get(name)!;
       if (name.startsWith('nodes/')) {
-        const a = JSON.parse(content) as { definition: { meta: { source: string } } };
-        const b = JSON.parse(c13Content) as { definition: { meta: { source: string } } };
+        const a = JSON.parse(content) as { definition: { meta: { source: string } }; params?: unknown };
+        const b = JSON.parse(c13Content) as typeof a;
         a.definition.meta.source = b.definition.meta.source; // 预期差异归一（§6.3 注记）
+        delete a.params; // 实例 params 层归一（T6-19）：C-13=N3 default 模板随包入链（library 单写数据源）；
+        delete b.params; // C-07 develop=✨new 步骤预填——D-11 等价面=definition＋资产字节，实例层归各路径入库语义
         expect(b).toEqual(a);
       } else {
         expect(c13Content).toBe(content); // manifest/scripts/config 逐字节一致
@@ -261,10 +263,14 @@ describe('§6.2 完整性 E2E（手动自建→保存→导入→导出往返—
     expect(defs).toHaveLength(1);
     expect(defs[0]!.kind).toBe('custom');
 
-    // ③ 节点库可查（library.upsert——SavePipeline 显式段＋链内段；scriptMeta 含 lang/file）
-    expect(h.libCalls).toContainEqual({
+    // ③ 节点库可查（library.upsert 单写=链内 ImportOrchestrator ⑥段——T6-19 去重：SavePipeline
+    //    显式段已去）＋真库行 params 模板（N3 default 投影随包入链）/scriptMeta 含 lang/file
+    expect(h.storageCalls.filter((c) => c.op === 'library.upsert')).toHaveLength(1); // 每保存恰一（去重前=显式段＋链内段二条）
+    const libRows = h.layer.dao.library.list().items.filter((e) => e.type === 'demo.fetcher');
+    expect(libRows).toHaveLength(1); // 真库行恰一（种子行以外不新增）
+    expect(libRows[0]).toMatchObject({
       name: '取数',
-      type: 'demo.fetcher',
+      params: { query: '咖啡', limit: 10 }, // N3 default 投影（paramsTemplateOf→assemble params 层→链内 ⑥段）
       scriptMeta: { lang: 'ts', file: 'scripts/demo_fetcher.ts' },
     });
 
@@ -286,6 +292,32 @@ describe('§6.2 完整性 E2E（手动自建→保存→导入→导出往返—
     expect(reimported).toEqual({ ok: true });
     expect(await readFile(path.join(h2.dir, 'node-types', 'demo.fetcher', '1.0.0', 'scripts', 'demo_fetcher.ts'), 'utf8')).toBe(TS_CODE);
     expect(h2.registered.get('demo.fetcher')!.exec).toEqual(saved.exec); // 注册表条目往返一致
+    // ⑥a M-3 复验扩面（PM 补，T6-16 终审 M-1——原仅 scripts+exec）：干净目录侧 config/manifest/nodes
+    //    逐面读回（manifest 形=draft-zip-builder L179-191；nodes 文件名=safeStem(meta.name)）
+    expect(await readFile(path.join(h2.dir, 'node-types', 'demo.fetcher', '1.0.0', 'config', 'demo_fetcher.yaml'), 'utf8')).toBe(CONFIG_YAML);
+    const manifest2 = JSON.parse(await readFile(path.join(h2.dir, 'node-types', 'demo.fetcher', '1.0.0', 'manifest.json'), 'utf8')) as {
+      kind: string;
+      name: string;
+      version: string;
+      scripts: Record<string, { file: string; lang: string; entry: string }>;
+    };
+    expect(manifest2.kind).toBe('node');
+    expect(manifest2.name).toBe('取数');
+    expect(manifest2.version).toBe('1.0.0');
+    expect(manifest2.scripts['demo.fetcher']).toEqual({ file: 'scripts/demo_fetcher.ts', lang: 'ts', entry: 'run' });
+    const nodeDoc2 = JSON.parse(await readFile(path.join(h2.dir, 'node-types', 'demo.fetcher', '1.0.0', 'nodes', '取数.json'), 'utf8')) as {
+      type: string;
+      definition: { meta: { source: string }; exec: unknown };
+    };
+    expect(nodeDoc2.type).toBe('demo.fetcher');
+    expect(nodeDoc2.definition.meta.source).toBe('manual');
+    expect(nodeDoc2.definition.exec).toEqual(saved.exec); // 三跳（保存→zip→导入）exec 零漂移
+
+    // ⑥′ 二连保存 library 行恰一（T6-19 验收）：同 harness 再存一次→library.upsert op 累计恰二
+    //    （每存恰一）＋真库行仍恰一（A-11.1 同名同型覆盖不新增——去重前每存两条 op）
+    await h.save.saveToLibrary(manualTsDoc(), assets);
+    expect(h.storageCalls.filter((c) => c.op === 'library.upsert')).toHaveLength(2);
+    expect(h.layer.dao.library.list().items.filter((e) => e.type === 'demo.fetcher')).toHaveLength(1);
 
     // ⑦ 导出 zip（v1.0f types bytes 变体——真导出管线，资产目录→四件套）→条目含脚本/config
     //    且内容与原始资产往返一致；导出产物可再导入（往返闭合）
@@ -304,6 +336,23 @@ describe('§6.2 完整性 E2E（手动自建→保存→导入→导出往返—
     const exportEntries = await readZipEntries(exported.bytes);
     expect(exportEntries.get('scripts/demo_fetcher.ts')).toBe(TS_CODE); // 资产→zip 往返内容一致
     expect(exportEntries.get('config/demo_fetcher.yaml')).toBe(CONFIG_YAML);
+
+    // ⑧ M-1 真再导入（PM 补，T6-16 终审 M-1）：exported.bytes 走 importArchiveBytes→注册/定义库/资产
+    //    三面重建——「导出产物可再导入（往返闭合）」注释收敛为真断言
+    const h3 = makeRealHarness('e2e-export-reimport');
+    // vi.fn 包装面 tsc 判型不可直调——收窄为函数形（运行时=orch.importArchiveBytes bind 真件）
+    const importBytes = h3.importArchiveBytes as unknown as (
+      bytes: Uint8Array,
+      opts?: { confirm: () => Promise<boolean> },
+    ) => Promise<{ nodes: Array<{ type: string }> }>;
+    const reimportedExport = await importBytes(exported.bytes, { confirm: async () => true });
+    expect(reimportedExport.nodes).toHaveLength(1);
+    expect(reimportedExport.nodes[0]!.type).toBe('demo.fetcher');
+    expect(h3.registered.get('demo.fetcher')!.kind).toBe('custom');
+    expect(h3.registered.get('demo.fetcher')!.exec).toEqual(saved.exec); // 导出→再导入 exec 零漂移
+    expect(h3.layer.dao.definitions.loadAll().filter((d) => d.type === 'demo.fetcher')).toHaveLength(1);
+    expect(await readFile(path.join(h3.dir, 'node-types', 'demo.fetcher', '1.0.0', 'scripts', 'demo_fetcher.ts'), 'utf8')).toBe(TS_CODE);
+    h3.layer.close();
 
     h.layer.close();
     h2.layer.close();

@@ -150,9 +150,10 @@ describe('§6.5d factoryReset → 三目录空＋relaunch 断言（mock app）',
     expect(fs.existsSync(vaultFile)).toBe(true); // vault.bin 不随重置清理（T4-15）
     expect(app.relaunchCalls).toBe(1);
     expect(app.quitCalls).toBe(1);
-    // 重种后库可用（种子回归）：flows.list 恢复种子流程
+    // 重种后库可用（种子回归）：flows.list 恢复种子流程（T6-18：空 preloadExamples 钩子=bare
+    // 面，f1~f4 先种；本用例验桥面重种回归，不验全量种子）
     const flows = await client.invoke('flows.list', undefined);
-    expect(flows.items.length).toBeGreaterThanOrEqual(9); // f1~f9（T1-03 种子）
+    expect(flows.items.length).toBeGreaterThanOrEqual(4);
   });
 });
 
@@ -280,9 +281,9 @@ describe('非 cdp 真径（T4-20 评审 blocker 收口：nodeRunStart 无 lanes 
 describe('T1-08 补跑终态：31 op 经 preload 真面全量往返（T4-14 分步一登记的终态）', () => {
   it('31 op 全量依序往返（真 StorageLayer/DAO＋mock app；factoryReset 收尾）', async () => {
     const { client, app } = bootBridge();
-    // flows（7）
+    // flows（7）——T6-18：空 preloadExamples 钩子=bare 面（f1~f4 先种）
     const listed = await client.invoke('flows.list', undefined);
-    expect(listed.items.length).toBeGreaterThanOrEqual(9);
+    expect(listed.items.length).toBeGreaterThanOrEqual(4);
     const created = await client.invoke('flows.create', { name: 'T420 终态' });
     const flowId = created.id;
     const doc0 = await client.invoke('flows.get', { id: flowId });
@@ -392,8 +393,8 @@ describe('T1-08 补跑终态：31 op 经 preload 真面全量往返（T4-14 分�
     // settings.factoryReset（第 31 op；目录清空＋relaunch 断言面=§6.5d）
     await expect(client.invoke('settings.factoryReset', undefined)).resolves.toBeUndefined();
     expect(app.relaunchCalls).toBe(1);
-    // 重种回归：种子流程恢复
-    expect((await client.invoke('flows.list', undefined)).items.length).toBeGreaterThanOrEqual(9);
+    // 重种回归：种子流程恢复（T6-18：空钩子=bare 面 f1~f4）
+    expect((await client.invoke('flows.list', undefined)).items.length).toBeGreaterThanOrEqual(4);
   });
 });
 

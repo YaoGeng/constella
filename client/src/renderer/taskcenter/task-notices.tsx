@@ -1,7 +1,10 @@
 // TaskNotices —— 任务中心提示行（T6-11；TDD-C-10 §8① lane 内存告警行＋§8② cron missed 提示）。
 //   §8①：单 lane 会话预算 ≤150MB（01 §12 非功能表；LANE_MEMORY_BUDGET_BYTES=X-01 冻结值），
-//   超预算在任务中心告警——数据通道=env:systemInfo payload lanes 数组（mock 先行：装配点
-//   laneMemories getter 注入，数据面随 C-M1 事件，T6-16 复跑解除）；
+//   超预算在任务中心告警——数据通道=env:systemInfo payload lanes 数组（✅ T6-16 mock 解除复跑
+//   落位：真数据面已 renderer 可达——main domain-channels handleEnvSystemInfo lanes=deps.laneMemory()
+//   〔production-assembly→CdpSessionManager.laneMemory 聚合〕，经既有 env:systemInfo 冻结通道；
+//   生产装配=assembly/app-runtime 10s 轮询缓存→taskCenterDeps.laneMemories getter 注入本组件
+//   ——真形复跑测试见 assembly/app-shell.spec〔runtime＋jsdom UI 两形〕）；
 //   §8②：A-6.6「上次计划触发 <时间> 未执行，可手动运行」——只提示不补跑；数据=restoreRunState
 //   启动自算 missedFires（log-replay-service——notices store 装配位 setMissed 消费）。
 import { LANE_MEMORY_BUDGET_BYTES, type LaneMemory } from '@constella/shared/ipc';
@@ -59,7 +62,7 @@ export function createMissedNoticeStore(): MissedNoticeStore {
 export interface TaskNoticesProps {
   /** cron missed 提示（restoreRunState 产出——A-6.6） */
   missed: readonly CronMissedNotice[];
-  /** lane 会话内存快照（mock 先行注入位——数据面随 C-M1 env:systemInfo lanes 数组） */
+  /** lane 会话内存快照（注入位——生产=env:systemInfo lanes 轮询缓存真数据〔T6-16 复跑落位〕） */
   laneMemories: readonly LaneMemory[];
 }
 

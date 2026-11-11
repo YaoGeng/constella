@@ -1,17 +1,20 @@
-// 示例资产 9 —— 官方分发的强节点示例包数据源（T5-08 / TDD-C-08 §3「示例资产 9 首启装载」段）。
+// 示例资产 10 —— 官方分发的强节点示例包数据源（T5-08 / TDD-C-08 §3「示例资产首启装载」段；
+// T6-18 增 xhs.comment.post：9→10，PM 裁决 2026-11-11——MA-3 智能评论种子载体，
+// 定义形=demo L928-931 强节点/L954 脚本源同构；「示例资产 9/definitions=21」为 P5 收口
+// 簿记非契约面，net.fetch 保留不撤）。
 //
-// 本模块=示例内容**单一事实源**（03 L1890：示例 9 强节点定义+scripts 走 zip 资产包链、
+// 本模块=示例内容**单一事实源**（03 L1890：示例强节点定义+scripts 走 zip 资产包链、
 // kind=custom、可被同型自定义节点覆盖——01 A-4.02）：
 //   - 生成脚本 client/scripts/gen-examples.mjs 经 esbuild 打包本模块→用 main/zip ZipWriter
-//     （ZIP_EPOCH 确定性）产出 client/assets/examples/*.zip 九枚入库产物；
+//     （ZIP_EPOCH 确定性）产出 client/assets/examples/*.zip 十枚入库产物；
 //   - example-preloader.spec 以本模块重产字节与入库 zip 逐枚 SHA-256 比对（漂移即断言失败）；
 //   - 运行期 ExamplePreloader 只扫 examplesDir 目录消费 zip 文件，不 import 本模块
 //     （预装面=纯文件输入，升级=随分发替换 zip——03 §8 扩展点②）。
 //
-// 内容口径（卡面约束）：强节点（exec≠null）＋py/ts 双运行时混合（6 py＋3 ts）＋类目多样
+// 内容口径（卡面约束）：强节点（exec≠null）＋py/ts 双运行时混合（7 py＋3 ts）＋类目多样
 // （CDP/社媒/数据/AI/网络）＋「网络」类目 ≥1（net.fetch=ctx.net 面示例，N1 网络门）＋
 // 不撞内置 12 命名空间（C-02 checkNamespace 精确匹配口径）。定义形源自 demo L899-938
-// 自研强节点九型（参数/出口/inner 同源），补 exec/io/policy 至 N1~N8 全维度；
+// 自研强节点十型（参数/出口/inner 同源），补 exec/io/policy 至 N1~N8 全维度；
 // 每定义须经 C-02 validateDefinition 八条零错误（spec 断言面）。
 import type { NodeDefinition } from '@constella/shared/dsl';
 import type { PackageManifest } from '@constella/shared/manifest';
@@ -44,7 +47,8 @@ export interface ExampleAsset {
 const L = (lines: readonly string[]): string => lines.join('\n') + '\n';
 
 /**
- * 示例资产 9（demo L899-938 自研强节点同源；net.fetch 为 ctx.net 面示例增补——卡面「网络」类目约束）。
+ * 示例资产 10（demo L899-938 自研强节点同源；net.fetch 为 ctx.net 面示例增补——卡面「网络」类目约束；
+ * xhs.comment.post 为 T6-18 补入——demo 强节点十型唯一缺位，MA-3 种子载体）。
  * 出口路由三例（gate.login ok/blocked、ai.classify hit/miss、xhs.auto-reply replied/escalated）；
  * io 契约三例（ai.classify per-exit＝X-5、xhs.search/net.fetch 单 output）；N5 inner 一例
  * （xhs.auto-reply）；N6 failBranch 一例（ai.classify→miss，MA-1 unknown 形态同构）；
@@ -475,6 +479,60 @@ export const EXAMPLE_ASSETS: readonly ExampleAsset[] = [
     ]),
   },
   {
+    // T6-18（PM 裁决 2026-11-11）：MA-3 智能评论种子载体——demo L928-931 定义形/L954 BUNDLE
+    // （python/xhs_comment.py）同构；单出口（demo outs:['out']）；频控写档语义随 dm.send 形
+    // （retries=0——频控类发送不重试）；作者错位防护语义入 meta.description（demo doc 原文）。
+    type: 'xhs.comment.post',
+    definition: {
+      type: 'xhs.comment.post',
+      kind: 'custom',
+      meta: {
+        name: '智能评论发布',
+        icon: '💬',
+        category: '社媒',
+        description:
+          '导航目标笔记 → 定位楼层 → 填入评论文本 → 等发送按钮异步使能后点击 → 列表轮询确认。写档频控内置（4 req/min），作者错位防护（不评论自家笔记）。',
+        author: '@constella',
+        source: 'zip',
+      },
+      ports: { ins: ['in'], outs: [{ id: 'out', label: '输出' }] },
+      paramsSchema: [
+        { k: 'maxLen', label: '评论长度上限', t: 'number', default: 50, min: 1 },
+        { k: 'ratePerMin', label: '发布频率 (条/分钟)', t: 'number', default: 4, min: 1 },
+      ],
+      exec: { lang: 'python', file: 'scripts/xhs_comment.py', entry: 'run', deps: 'deps/requirements.txt' },
+      policy: { timeoutMs: 600_000, retries: 0 },
+      version: '1.0.0',
+      packageVersion: '1.0.0',
+    },
+    script: L([
+      '# -*- coding: utf-8 -*-',
+      '"""智能评论发布（官方示例）：逐笔记导航→截断至 maxLen→ctx.browser.comment 发布，频控（ratePerMin 条/分钟）内置。"""',
+      'from typing import Any',
+      '',
+      'from constella_sdk import NodeCtx',
+      '',
+      '',
+      'async def run(ctx: NodeCtx) -> dict[str, Any]:',
+      '    max_len = int(ctx.params.get("maxLen", 50))',
+      '    rate = int(ctx.params.get("ratePerMin", 4))',
+      '    items = (ctx.input or {}).get("data", []) if isinstance(ctx.input, dict) else []',
+      '    posted: list[object] = []',
+      '    for it in items:',
+      '        note = it if isinstance(it, dict) else {}',
+      '        url = str(note.get("url", ""))',
+      '        text = str(note.get("text", ""))[:max_len]',
+      '        if not url or not text:',
+      '            continue',
+      '        await ctx.browser.open(url)',
+      '        await ctx.browser.comment(text, rate)',
+      '        posted.append({"url": url, "len": len(text)})',
+      '        ctx.log(f"已评论 {url}（{len(posted)}/{len(items)}，频控 {rate} 条/分钟）")',
+      '    return {"data": {"posted": posted}}',
+    ]),
+    config: L(['# 智能评论发布默认配置（实例参数可覆盖——02 §14 覆盖序）', 'sendWaitMs: 800', 'confirmRounds: 3']),
+  },
+  {
     type: 'xhs.auto-reply',
     definition: {
       type: 'xhs.auto-reply',
@@ -536,7 +594,7 @@ export const EXAMPLE_ASSETS: readonly ExampleAsset[] = [
   },
 ];
 
-/** 示例资产数（=9——卡面/锚口径常量，断言面） */
+/** 示例资产数（=10——卡面/锚口径常量，断言面；T6-18 前=9） */
 export const EXAMPLE_COUNT = EXAMPLE_ASSETS.length;
 
 /** 示例类型集（=asset zip 文件名去 .zip——预装落库后 node_definitions 的 custom 增量面） */

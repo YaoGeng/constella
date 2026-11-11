@@ -55,14 +55,13 @@ async function atSave(m: { container: HTMLDivElement }): Promise<void> {
   expect(m.container.querySelector('[data-step-form="save"]')).toBeTruthy();
 }
 
-/** 注入保存链的入口 deps（mock 五口——saveToLibrary 记录入参） */
+/** 注入保存链的入口 deps（mock 四口——saveToLibrary 记录入参；library 单写归链内段 T6-19） */
 function pipelineFace(result: SaveReport | Error = { ok: true }) {
   const calls: Array<{ doc: { type: string; meta: { source?: string } }; assets: SaveAssets }> = [];
   const deps: SavePipelineDeps = {
     assemble: () => ({ bytes: new Uint8Array([1]) }),
     register: () => undefined,
     upsertDefinition: async () => undefined,
-    libraryUpsert: async () => undefined,
     importer: { importArchiveBytes: async () => ({ nodes: [], noScript: [] }) },
   };
   const pipeline = createSavePipeline(deps);

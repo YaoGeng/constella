@@ -1,14 +1,16 @@
-// ExamplePreloader＋示例资产 9（T5-08 / TDD-C-08 §3 ExamplePreloader 组件行＋§3 示例资产 9 段；
+// ExamplePreloader＋示例资产 10（T5-08 / TDD-C-08 §3 ExamplePreloader 组件行＋§3 示例资产段；
 // §6.7 验收宿主——`vitest run zip-pipeline` 或本文件直跑，main 侧 node 直跑）。
+// T6-18（PM 裁决 2026-11-11）：9→10——补 xhs.comment.post（MA-3 智能评论种子载体；
+// demo L928-931/L954 同源定义形；「示例资产 9/definitions=21」为 P5 收口簿记非契约面）。
 //
 // 覆盖两半：
-//   A. 入库产物完整性——9 zip 在位/确定性（数据源重产与入库字节一致）/C-02 validateDefinition
+//   A. 入库产物完整性——10 zip 在位/确定性（数据源重产与入库字节一致）/C-02 validateDefinition
 //      零错误＋不撞内置 12/类目多样含「网络」＋py·ts 双语言/secret 仅 schema 零密文；
-//   B. 预装行为——首启 installed=9（hash 防重＋逐包全安检直调 AssetInstaller.commit——
+//   B. 预装行为——首启 installed=10（hash 防重＋逐包全安检直调 AssetInstaller.commit——
 //      source='builtin' 免确认=W-35 裁定 A：官方分发经同一安全校验管线）/二启 installed=0
 //      零 upsert（§6.7 二启零 delta·main 半段）/单包失败不阻断（失败隔离大声留痕）/
 //      资产升级=hash 变化触发新包预装＋同名同型覆盖（03 §8 扩展点②＋01 A-11.1）。
-// definitions=21 全量断言（open 装配序联动）在 storage/migrate/seeds-runner.spec（C-06 §6.1d 补跑）。
+// definitions=22 全量断言（open 装配序联动）在 storage/migrate/seeds-runner.spec（C-06 §6.1d 补跑）。
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { cp, mkdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -35,17 +37,17 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
-/** 9 zip 期望文件名（<type>.zip） */
+/** 10 zip 期望文件名（<type>.zip） */
 const EXPECTED_ZIPS = EXAMPLE_TYPES.map((t) => `${t}.zip`);
 
 // ————————————————————————————————————————————
 // A. 入库产物完整性（示例即 T5-07 管线的真数据验证）
 // ————————————————————————————————————————————
 
-describe('示例资产 9（入库产物完整性）', () => {
-  it('9 枚 zip 在位（<type>.zip ×9、无多余 zip）；EXAMPLE_COUNT=9', () => {
-    expect(EXAMPLE_COUNT).toBe(9);
-    expect(EXPECTED_ZIPS).toHaveLength(9);
+describe('示例资产 10（入库产物完整性）', () => {
+  it('10 枚 zip 在位（<type>.zip ×10、无多余 zip）；EXAMPLE_COUNT=10', () => {
+    expect(EXAMPLE_COUNT).toBe(10);
+    expect(EXPECTED_ZIPS).toHaveLength(10);
     expect(readdirSync(EXAMPLES_DIR).filter((f) => f.endsWith('.zip')).sort()).toEqual([...EXPECTED_ZIPS].sort());
   });
 
@@ -60,7 +62,7 @@ describe('示例资产 9（入库产物完整性）', () => {
     }
   });
 
-  it('C-02 validateDefinition：9 定义八条零错误；kind=custom、exec≠null（强节点）、不撞内置 12', async () => {
+  it('C-02 validateDefinition：10 定义八条零错误；kind=custom、exec≠null（强节点）、不撞内置 12', async () => {
     const reader = createZipReader();
     for (const pkg of buildExamplePackages()) {
       const entries = await reader.read(path.join(EXAMPLES_DIR, pkg.zipName));
@@ -187,13 +189,13 @@ async function copyExamplesTo(rel: string): Promise<string> {
 }
 
 describe('ExamplePreloader（首启预装——source=builtin 免确认·W-35 裁定 A）', () => {
-  it('首启：9 包逐包直调 commit（全安检内嵌）→ installed=9；assetPackages 9 行＋definitions 9 custom；node-types/<type>/1.0.0/ 四件套落盘', async () => {
+  it('首启：10 包逐包直调 commit（全安检内嵌）→ installed=10；assetPackages 10 行＋definitions 10 custom；node-types/<type>/1.0.0/ 四件套落盘', async () => {
     const dao = makeDao();
     const { preloader } = makePreloader(EXAMPLES_DIR, dao);
     const res = await preloader.preloadIfMissing();
-    expect(res).toEqual({ installed: 9 });
-    expect(dao.assetPackages).toHaveLength(9);
-    expect(dao.definitions).toHaveLength(9);
+    expect(res).toEqual({ installed: 10 });
+    expect(dao.assetPackages).toHaveLength(10);
+    expect(dao.definitions).toHaveLength(10);
     expect(dao.definitions.every((d) => d.kind === 'custom')).toBe(true);
     expect(dao.definitions.map((d) => d.type).sort()).toEqual([...EXAMPLE_TYPES].sort());
     // asset_packages 行形：nodeType=type、contentHash=zip 文件 SHA-256（幂等键面）
@@ -233,15 +235,15 @@ describe('ExamplePreloader（首启预装——source=builtin 免确认·W-35 �
     expect(dao.assetPackages).toEqual(before.pkgs);
   });
 
-  it('单包失败不阻断启动：截断一枚 → 该包跳过大声留痕、其余 8 包照常预装（⚠ 失败策略——锚含糊，本卡冻结失败隔离）', async () => {
+  it('单包失败不阻断启动：截断一枚 → 该包跳过大声留痕、其余 9 包照常预装（⚠ 失败策略——锚含糊，本卡冻结失败隔离）', async () => {
     const dir = await copyExamplesTo('corrupt');
     await writeFile(path.join(dir, 'xhs.search.zip'), readFileSync(path.join(dir, 'xhs.search.zip')).subarray(0, 100)); // 截断→EOCD 缺失
     const dao = makeDao();
     const logs: string[] = [];
     const { preloader } = makePreloader(dir, dao, logs);
     const res = await preloader.preloadIfMissing();
-    expect(res).toEqual({ installed: 8 });
-    expect(dao.assetPackages).toHaveLength(8);
+    expect(res).toEqual({ installed: 9 });
+    expect(dao.assetPackages).toHaveLength(9);
     expect(dao.definitions.map((d) => d.type)).not.toContain('xhs.search');
     expect(logs.some((l) => l.includes('xhs.search.zip') && l.includes('失败'))).toBe(true); // 点名留痕
   });
@@ -273,8 +275,8 @@ describe('ExamplePreloader（首启预装——source=builtin 免确认·W-35 �
 
     const res = await preloader.preloadIfMissing();
     expect(res).toEqual({ installed: 1 });
-    expect(dao.assetPackages).toHaveLength(10); // 内容寻址：新 hash=新行
-    expect(dao.definitions).toHaveLength(9); // 同名同型覆盖（01 A-11.1）
+    expect(dao.assetPackages).toHaveLength(11); // 内容寻址：新 hash=新行
+    expect(dao.definitions).toHaveLength(10); // 同名同型覆盖（01 A-11.1）
     expect(dao.definitions.find((d) => d.type === 'gate.login')?.meta.name).toBe('登录闸 v2');
   });
 
@@ -292,8 +294,8 @@ describe('ExamplePreloader（首启预装——source=builtin 免确认·W-35 �
     await writeFile(path.join(dir, 'README.md'), '示例资产维护说明见 scripts/gen-examples.mjs\n');
     const dao = makeDao();
     const { preloader } = makePreloader(dir, dao);
-    await expect(preloader.preloadIfMissing()).resolves.toEqual({ installed: 9 });
-    expect(dao.assetPackages).toHaveLength(9);
+    await expect(preloader.preloadIfMissing()).resolves.toEqual({ installed: 10 });
+    expect(dao.assetPackages).toHaveLength(10);
   });
 });
 

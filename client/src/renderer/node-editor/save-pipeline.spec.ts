@@ -1,10 +1,13 @@
 // SavePipeline 套件（T6-09 / TDD-C-13 §3 SavePipeline 行＋§1 saveToLibrary 签名＋§6.1c/§6.1f；
 // 05 T6-09 卡「保存链」链序逐环节）。
 //
-// 断言面（验收冻结）：
+// 断言面（验收冻结；T6-19 口径同步——library 单写去重）：
 //   - §6.1c 保存链：同名同型二连保存→register 覆盖不新增（mock Map size 恒 1）＋每次保存
-//     register/upsertDefinition/libraryUpsert 各恰一次＋importArchiveBytes 恰一次（confirm
+//     register/upsertDefinition/importArchiveBytes 各恰一次（confirm
 //     自动放行——用户确认已在保存钮收口，A-10.2 同 T5-03 草稿卡口径）；
+//     library.upsert 单写=链内 ImportOrchestrator ⑥段（显式段已去——T6-19 A1 遗留1；
+//     「恰一次」观察面从 SavePipelineDeps.libraryUpsert 移至链内段，真链断言归
+//     assembly/node-editor-pipeline-contract.spec.ts）；
 //   - §6.1f source='manual'：任意入参 source（zip/ai-forge）保存定义恒改写 manual（02 §8.2
 //     upsert 四入口之手动编辑器）；
 //   - M5（batch-3 转交 1）：保存链只打包当前 lang——未选中语言草稿文本的语法错不拦、不打包
@@ -54,16 +57,14 @@ interface Harness {
   deps: SavePipelineDeps;
   registered: Map<string, NodeDefinition>;
   upserted: NodeDefinition[];
-  libEntries: Array<{ name: string; type: string; scriptMeta: { lang: 'python' | 'ts'; file: string } }>;
   importCalls: Array<{ bytes: Uint8Array; opts?: ImportArchiveOpts }>;
   assembled: SavePackageParts[];
 }
 
-/** mock 五口＋真 assemble 形记录（zip bytes=桩——真读端 roundtrip 归 assembly spec） */
+/** mock 四口＋真 assemble 形记录（zip bytes=桩——真读端 roundtrip/library 单写归 assembly spec） */
 function makePipeline(opts: { hasType?: (t: string) => boolean } = {}): Harness & { pipeline: ReturnType<typeof createSavePipeline> } {
   const registered = new Map<string, NodeDefinition>();
   const upserted: NodeDefinition[] = [];
-  const libEntries: Harness['libEntries'] = [];
   const importCalls: Harness['importCalls'] = [];
   const assembled: SavePackageParts[] = [];
   const deps: SavePipelineDeps = {
@@ -78,9 +79,6 @@ function makePipeline(opts: { hasType?: (t: string) => boolean } = {}): Harness 
     upsertDefinition: async (doc) => {
       upserted.push(doc);
     },
-    libraryUpsert: async (entry) => {
-      libEntries.push({ name: entry.name, type: entry.type, scriptMeta: entry.scriptMeta });
-    },
     importer: {
       importArchiveBytes: async (bytes, callOpts) => {
         importCalls.push({ bytes, opts: callOpts });
@@ -88,7 +86,7 @@ function makePipeline(opts: { hasType?: (t: string) => boolean } = {}): Harness 
       },
     },
   };
-  return { pipeline: createSavePipeline(deps), deps, registered, upserted, libEntries, importCalls, assembled };
+  return { pipeline: createSavePipeline(deps), deps, registered, upserted, importCalls, assembled };
 }
 
 /** py 主脚本草稿资产（当前 lang=python——config 含内容） */
@@ -103,14 +101,21 @@ function pyAssets(): SaveAssets {
 // §6.1c 保存链（各恰一次＋同名同型覆盖）
 // ————————————————————————————————————————————
 
-describe('§6.1c 保存链：每次保存 register/upsertDefinition/libraryUpsert/importArchiveBytes 各恰一次', () => {
-  it('保存通过：四口各恰一次＋exec 定型（file/lang/config 指针）＋library 条目含 lang/file 元信息', async () => {
+describe('§6.1c 保存链：每次保存 register/upsertDefinition/importArchiveBytes 各恰一次', () => {
+  it('library 单写去重（T6-19 A1 遗留1）：params 模板随包（assemble params 层——链内 ⑥段单写数据源）', async () => {
+    const h = makePipeline();
+    await h.pipeline.saveToLibrary(manualDoc(), pyAssets());
+    // deps 已无 libraryUpsert 面（显式段结构性移除——单写=链内 ImportOrchestrator ⑥段；
+    // 「每存恰一 op／真库行恰一」断言归 assembly/node-editor-pipeline-contract.spec.ts 真链面）
+    expect(h.assembled[0]!.params).toEqual({ query: '咖啡', limit: 10 }); // N3 default 投影随包入链（library params 模板数据源）
+  });
+
+  it('保存通过：三口各恰一次＋exec 定型（file/lang/config 指针）', async () => {
     const h = makePipeline();
     const report = await h.pipeline.saveToLibrary(manualDoc(), pyAssets());
     expect(report).toEqual({ ok: true });
     expect(h.registered.size).toBe(1);
     expect(h.upserted).toHaveLength(1);
-    expect(h.libEntries).toHaveLength(1);
     expect(h.importCalls).toHaveLength(1);
     // 确认自动放行（保存钮=用户确认收口——A-10.2 不双收）
     expect(await h.importCalls[0]!.opts?.confirm?.({} as never)).toBe(true);
@@ -121,12 +126,6 @@ describe('§6.1c 保存链：每次保存 register/upsertDefinition/libraryUpser
       file: 'scripts/demo_fetcher.py',
       entry: 'run',
       config: 'config/demo_fetcher.yaml',
-    });
-    // library.upsert 含 lang/file 脚本元信息（§4 library_entries 条目形）
-    expect(h.libEntries[0]).toEqual({
-      name: '取数',
-      type: 'demo.fetcher',
-      scriptMeta: { lang: 'python', file: 'scripts/demo_fetcher.py' },
     });
   });
 
@@ -139,7 +138,6 @@ describe('§6.1c 保存链：每次保存 register/upsertDefinition/libraryUpser
     expect(h.registered.size).toBe(1); // 覆盖不新增（验收冻结断言）
     expect(h.registered.get('demo.fetcher')!.version).toBe('1.0.1'); // 第二次覆盖生效
     expect(h.upserted).toHaveLength(2); // 二连保存=两次动作各恰一次
-    expect(h.libEntries).toHaveLength(2);
     expect(h.importCalls).toHaveLength(2);
   });
 
@@ -223,7 +221,6 @@ describe('M5 只打包当前 lang（未选中语言草稿不校验不打包）',
     }
     expect(h.importCalls).toHaveLength(0);
     expect(h.registered.size).toBe(0);
-    expect(h.libEntries).toHaveLength(0);
   });
 });
 
@@ -251,13 +248,12 @@ describe('保存门：validateDefinition 单一来源→stepErrors 环节投影'
     }
   });
 
-  it('当前 lang 文本空→弱节点：exec=null＋assembler 无 script 条目＋library scriptMeta 空占位（C-06 缺省同形）', async () => {
+  it('当前 lang 文本空→弱节点：exec=null＋assembler 无 script 条目（library scriptMeta 空占位=链内 ⑥段缺省形——真链断言归 assembly contract spec）', async () => {
     const h = makePipeline();
     const report = await h.pipeline.saveToLibrary(manualDoc(), { scripts: { 'scripts/demo_fetcher.py': '' }, config: {} });
     expect(report).toEqual({ ok: true });
     expect(h.registered.get('demo.fetcher')!.exec).toBeNull();
     expect(h.assembled[0]!.script).toBeUndefined();
-    expect(h.libEntries[0]!.scriptMeta).toEqual({ lang: 'ts', file: '' }); // 空占位（import-orchestrator ⑥段同形）
   });
 
   it('assets 形违规：多脚本条目/非法后缀/路径穿越→SAVE-ASSETS 响亮拒绝（不静默折叠）', async () => {
@@ -276,7 +272,7 @@ describe('保存门：validateDefinition 单一来源→stepErrors 环节投影'
     const err = (await h.pipeline.saveToLibrary(manualDoc(), pyAssets()).catch((e: unknown) => e)) as Error & { code?: string };
     expect(err.code).toBe('SAVE-IMPORT');
     expect(err.message).toContain('ZIP-UNSAFE-ENTRY');
-    expect(h.registered.size).toBe(1); // ④~⑥ 已执行（链序按卡文——失败不回滚，同值幂等重存即修复）
+    expect(h.registered.size).toBe(1); // ④~⑤ 已执行（链序按卡文——失败不回滚，同值幂等重存即修复；library 单写在链内＝导入失败即未写）
   });
 });
 

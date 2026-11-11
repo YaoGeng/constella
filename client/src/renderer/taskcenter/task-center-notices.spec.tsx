@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-// TaskNotices 套件（T6-11；TDD-C-10 §8① lane 内存告警行（mock 先行——数据面随 C-M1 事件）
+// TaskNotices 套件（T6-11；TDD-C-10 §8① lane 内存告警行（注入位 laneMemories——生产数据面=
+// env:systemInfo lanes 真数据〔T6-16 复跑落位，装配级真形测试见 assembly/app-shell spec〕）
 // ＋§8② cron missed 提示行（A-6.6 只提示不补跑）。纯渲染件＋两个纯函数（lane 预算过滤/文案）。
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -34,7 +35,7 @@ async function mountNotices(m: readonly CronMissedNotice[], lanes: readonly Lane
   return { container, root };
 }
 
-describe('§8① lane 内存告警行（mock 先行——注入位 laneMemories；数据面随 C-M1 env:systemInfo lanes 数组）', () => {
+describe('§8① lane 内存告警行（注入位 laneMemories——生产=env:systemInfo lanes 真数据〔T6-16 复跑〕）', () => {
   it('超预算过滤：workingSetBytes>150MB 命中（边界=恰 150MB 不告警）', () => {
     const over = overBudgetLanes([
       lane({ laneKey: 'a', workingSetBytes: 149 * 1024 * 1024 }),
