@@ -3,13 +3,14 @@
 // ./definition-draft，本组件为宿主渲染面：open=false 渲染 null）。
 //
 //   编排：环节导航（回退自由/前进受门）/当前环节表单（环节 1=StepMeta、2=StepPorts、
-// 3=StepSchema〔T6-07〕、4~6=StepPlaceholder 随 T6-08/09 替换）/实时校验回显
-// （computeStepErrors——validateDefinition 单一来源投影，错误定位到环节+字段）/
+// 3=StepSchema〔T6-07〕、4=StepScript＋StepConfig 两页子 tab〔T6-08——01 §5.3 PATH1 环节
+// 4/5 两页合一环节〕、5~6=StepPlaceholder 随 T6-09 替换）/实时校验回显
+// （computeStepErrors——validateDefinition 单一来源投影＋环节 4 语法门，错误定位到环节+字段）/
 // 上一步-下一步（未过门 next 禁用并标 data-gate-blocked）。
 //   预览：环节 1/2 右侧 NodeCardPreview（§3 复用处）——端口布局/✨/参数预览实时反映；
 // 环节 3 右侧 ParamFormPreview（§3 复用处=StepSchema——C-02 ParamFormRenderer 同源渲染，X-8）。
 //   dirty 位：未保存标「未保存」（草稿内存态——未保存不落盘，保存动作随 T6-09 StepSave）。
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
 import type { EditorStepKey } from './definition-draft';
 import {
@@ -21,10 +22,12 @@ import {
 } from './definition-draft';
 import { NodeCardPreview } from './node-card-preview';
 import { ParamFormPreview } from './param-form-preview';
+import { StepConfig } from './step-config';
 import { StepMeta } from './step-meta';
 import { StepPlaceholder } from './step-placeholder';
 import { StepPorts } from './step-ports';
 import { StepSchema } from './step-schema';
+import { StepScript } from './step-script';
 
 const STEP_INDEX: Record<EditorStepKey, number> = {
   meta: 0,
@@ -50,15 +53,18 @@ export function EditorShell() {
   const mode = useDefinitionDraftStore((s) => s.mode);
   const step = useDefinitionDraftStore((s) => s.step);
   const draft = useDefinitionDraftStore((s) => s.draft);
+  const script = useDefinitionDraftStore((s) => s.script);
   const seedError = useDefinitionDraftStore((s) => s.seedError);
   const deps = useDefinitionDraftStore((s) => s.deps);
   const dirty = useDefinitionDraftStore(isDirty);
-  const { goToStep, nextStep, prevStep, patchMeta, setType, setPorts, setParamsSchema, setPolicy, setIo, closeEditor } =
+  const { goToStep, nextStep, prevStep, patchMeta, setType, setPorts, setParamsSchema, setPolicy, setIo, patchScript, closeEditor } =
     useDefinitionDraftStore.getState();
+  /** 环节 4 两页子 tab（01 §5.3 PATH1 环节 4/5=脚本/config 两页合一环节——UI 临时态不入 store） */
+  const [scriptPage, setScriptPage] = useState<'script' | 'config'>('script');
 
   const errors = useMemo(
-    () => computeStepErrors(draft, deps ?? undefined, mode === 'edit' ? draft.type : undefined),
-    [draft, deps, mode],
+    () => computeStepErrors(draft, deps ?? undefined, mode === 'edit' ? draft.type : undefined, script),
+    [draft, deps, mode, script],
   );
 
   if (!open) return null;
@@ -163,7 +169,46 @@ export function EditorShell() {
                     onIoChange={setIo}
                   />
                 )}
-                {(step === 'script' || step === 'inner' || step === 'save') && (
+                {step === 'script' && (
+                  <div className="flex flex-col gap-2">
+                    {/* 环节 4 两页子 tab（脚本/config——PATH1 环节 4/5 合一） */}
+                    <div className="flex items-center gap-1">
+                      {(['script', 'config'] as const).map((page) => (
+                        <button
+                          key={page}
+                          type="button"
+                          data-script-page-tab={page}
+                          aria-pressed={scriptPage === page}
+                          onClick={() => setScriptPage(page)}
+                          className={cn(
+                            'rounded-md border px-2.5 py-1 text-[11px]',
+                            scriptPage === page
+                              ? 'border-[var(--accent)] bg-[var(--accent-tint)] text-[var(--accent-hi)]'
+                              : 'border-[var(--line-2)] text-[var(--tx-2)] hover:border-[var(--accent)]',
+                          )}
+                        >
+                          {page === 'script' ? '脚本' : '配置'}
+                        </button>
+                      ))}
+                    </div>
+                    {scriptPage === 'script' ? (
+                      <StepScript
+                        script={script}
+                        paramsSchema={draft.paramsSchema}
+                        errors={errors.script ?? []}
+                        onScriptChange={patchScript}
+                      />
+                    ) : (
+                      <StepConfig
+                        type={draft.type}
+                        configYaml={script.configYaml}
+                        paramsSchema={draft.paramsSchema}
+                        onConfigChange={(yaml) => patchScript({ configYaml: yaml })}
+                      />
+                    )}
+                  </div>
+                )}
+                {(step === 'inner' || step === 'save') && (
                   <StepPlaceholder step={step} />
                 )}
               </div>

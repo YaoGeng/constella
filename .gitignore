@@ -19,3 +19,10 @@ Thumbs.db
 spikes/*/*
 !spikes/*/REPORT.md
 server/generated/
+
+# 运行时数据与本地等价验证残留（T6-04/T6-14 评审 M 项 PM 补，2026-11-11：market 包对象落盘
+# 与 pnpm deploy 部署树均非版本库内容；.deploy-* 若在 server/ 下重建会被 vitest 收集，勿提交）
+server/storage/
+server/storage-*/
+server/.deploy-*/
+server/.run-tools-*/

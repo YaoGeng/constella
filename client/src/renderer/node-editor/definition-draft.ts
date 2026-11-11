@@ -16,10 +16,21 @@
 // C-06 loadAllDefinitions 投影，装配点接线；P-3 本模块不持注册表实例〕）。edit 载入后
 // meta.source 固定改写 'manual'（§1 StepMeta 行「source 可编辑态固定 'manual' 写入语义位」
 // ——02 §8.2 upsert 四入口之手动编辑器）；改写不计 dirty（dirty=用户改动，基线=载入态）。
+//
+//   环节 4 脚本草稿（T6-08）：script.lang/py/ts/configYaml 内存草稿（未保存不落盘——保存链
+// 随 T6-09 SavePipeline；edit 态资产文本装载=装配点注入面，create/edit 同空起）。lang 值域
+// 对齐 DSL ExecSpec.lang 'python'|'ts'（UI 显示 py|ts——「py|ts 切换」字面的等价确定形，
+// 免草稿→exec 落库二次转换）；py/ts 双文本各自存续=「切换保留各自文本」语义（零拷贝零丢失）。
+// 环节门增 N4-syntax（PATH1 语法校验门第三条——01 §5.3 环节 4「语法校验保存门」/03 C-13
+// §6.1d）：当前选中语言文本经 SyntaxChecker 有错 → step 'script'、field 'script.code'
+// 拦门（未选中语言草稿暂存不拦——保存链只打包当前 lang，T6-09 口径）；config 键失配
+// =§6.1e 警告不拦截（ConfigYamlEditor UI 面，不入 computeStepErrors）。
 import { create } from 'zustand';
 import type { IoContract, NodeDefinition, NodeMeta, NodePorts, ParamField, RunPolicy } from '@constella/shared/dsl';
 import { validateDefinition } from '../definition';
 import type { DefRule, FieldError } from '../definition';
+import { check } from './syntax-checker';
+import type { ScriptLang } from './syntax-checker';
 
 /** 六环节键（01 §5.3 六环节；PATH1 环节 4/5=script 两页合一环节，02 §3.2 C-13 行） */
 export type EditorStepKey = 'meta' | 'ports' | 'schema' | 'script' | 'inner' | 'save';
@@ -46,8 +57,26 @@ export const STEP_LABELS: Record<EditorStepKey, string> = {
   save: '⑥ 入库保存',
 };
 
-/** 环节门错误形（FieldError 超集：PATH1 表单门两条以扩展规则码入列——见文件头注） */
-export type StepErrorRule = DefRule | 'N1-name-required' | 'N1-type-required';
+/** 环节门错误形（FieldError 超集：PATH1 表单门两条＋环节 4 语法门一条以扩展规则码入列——见文件头注） */
+export type StepErrorRule = DefRule | 'N1-name-required' | 'N1-type-required' | 'N4-syntax';
+
+/** 环节 4 脚本草稿态（T6-08 StepScript/StepConfig 消费——lang 对齐 DSL ExecSpec.lang） */
+export interface ScriptDraft {
+  /** 当前脚本语言（'python' | 'ts'——UI 显示 py|ts） */
+  lang: ScriptLang;
+  /** python 脚本文本（lang 切换各自存续） */
+  py: string;
+  /** ts 脚本文本 */
+  ts: string;
+  /** config/*.yaml 文本（环节 4 config 页——键一致性警告判定输入） */
+  configYaml: string;
+}
+
+/** 脚本草稿初始态（lang=python：demo 内置节点脚本 py 主导〔SCRIPT_BODIES 十余条 py vs 一条
+ * ts〕的事实基线——设计值；文本空起=模板注入是显式动作〔StepScript 注入按钮〕不预置） */
+function defaultScriptDraft(): ScriptDraft {
+  return { lang: 'python', py: '', ts: '', configYaml: '' };
+}
 
 export interface StepFieldError {
   field: string;
@@ -129,12 +158,16 @@ function stepOfError(e: FieldError): EditorStepKey {
  * ctx.hasType=命名空间动态查：edit 态传 selfType 排除自身（A-11.1 同型覆盖不误伤——
  * definition/types.ts 注「编辑既有定义时应传排除自身的 ctx」）；create 态不排除
  * （新打已注册类型=动态撞名报错）。静态 BUILTIN_TYPE_IDS 查在 checkNamespace 内恒跑（双查）。
+ * script=环节 4 脚本草稿（T6-08）：当前 lang 文本语法错误→N4-syntax 投影（可省——
+ * 旧调用面〔specs 两参直跑〕兼容）。
  */
 export function computeStepErrors(
   draft: NodeDefinition,
   deps?: EditorEntryDeps,
   /** edit 态自身 type（A-11.1 排除位；create 省略） */
   selfType?: string,
+  /** 环节 4 脚本草稿（T6-08——省略则跳过语法门） */
+  script?: ScriptDraft,
 ): StepErrors {
   const verdict = validateDefinition(draft, {
     hasType: (t) =>
@@ -153,6 +186,14 @@ export function computeStepErrors(
     gate.push({ field: 'type', message: '类型 id 必填（DSL 主键——02 §7.1 node_definitions.type）', rule: 'N1-type-required' });
   }
   if (gate.length > 0) (out.meta ??= []).unshift(...gate);
+  // 环节 4 语法门（T6-08；§6.1d）：当前 lang 文本经 SyntaxChecker——有错拦 script 环节，
+  // message 形「L<行号> <message>」（错误行定位——StepScript 错误列表直显）
+  if (script !== undefined) {
+    const code = script.lang === 'python' ? script.py : script.ts;
+    for (const e of check(script.lang, code)) {
+      (out.script ??= []).push({ field: 'script.code', message: `L${e.line} ${e.message}`, rule: 'N4-syntax' });
+    }
+  }
   return out;
 }
 
@@ -163,6 +204,10 @@ export interface DefinitionDraftState {
   draft: NodeDefinition;
   /** dirty 底数快照（create=初始骨架；edit=载入归一态——source 改写不计脏） */
   baseline: NodeDefinition;
+  /** 环节 4 脚本草稿（T6-08——内存不落盘；lang/py/ts/configYaml） */
+  script: ScriptDraft;
+  /** script 草稿 dirty 底数（与 baseline 同语义——create/edit 同空起） */
+  scriptBaseline: ScriptDraft;
   step: EditorStepKey;
   /** edit 载入失败（miss／builtin 拒）——EditorShell 呈错误面，不静默降级 create */
   seedError: string | null;
@@ -180,6 +225,8 @@ export interface DefinitionDraftState {
   setParamsSchema(paramsSchema: ParamField[]): void;
   setPolicy(policy: RunPolicy | null): void;
   setIo(io: IoContract | null): void;
+  /** 环节 4 脚本草稿读写面（T6-08 StepScript/StepConfig——patchScript 形对齐 patchMeta） */
+  patchScript(patch: Partial<ScriptDraft>): void;
   /** 环节跳转（回退自由；前进=逐门校验，未过门不得前进） */
   goToStep(target: EditorStepKey): void;
   nextStep(): void;
@@ -188,9 +235,9 @@ export interface DefinitionDraftState {
   reset(): void;
 }
 
-/** dirty 位选择器（draft↔baseline 序列比对——§3 组件级接口「draft 读写＋dirty 位」） */
-export function isDirty(s: Pick<DefinitionDraftState, 'draft' | 'baseline'>): boolean {
-  return JSON.stringify(s.draft) !== JSON.stringify(s.baseline);
+/** dirty 位选择器（draft/script 双底数序列比对——§3 组件级接口「draft 读写＋dirty 位」） */
+export function isDirty(s: Pick<DefinitionDraftState, 'draft' | 'baseline' | 'script' | 'scriptBaseline'>): boolean {
+  return JSON.stringify(s.draft) !== JSON.stringify(s.baseline) || JSON.stringify(s.script) !== JSON.stringify(s.scriptBaseline);
 }
 
 export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) => ({
@@ -198,6 +245,8 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
   mode: 'create',
   draft: defaultDraft(),
   baseline: defaultDraft(),
+  script: defaultScriptDraft(),
+  scriptBaseline: defaultScriptDraft(),
   step: 'meta',
   seedError: null,
   deps: null,
@@ -205,7 +254,8 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
   openNodeEditor: (seed, deps) => {
     if (seed?.type === undefined) {
       const draft = defaultDraft(); // create：无 seed（§1）
-      set({ open: true, mode: 'create', seedError: null, draft, baseline: clone(draft), step: 'meta', deps: deps ?? null });
+      const script = defaultScriptDraft();
+      set({ open: true, mode: 'create', seedError: null, draft, baseline: clone(draft), script, scriptBaseline: clone(script), step: 'meta', deps: deps ?? null });
       return;
     }
     const existing = deps?.getDefinition?.(seed.type);
@@ -216,6 +266,8 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
         seedError: `未找到类型「${seed.type}」的既有定义（editDefinition 需 custom 定义在册——载入经装配注入 getDefinition）`,
         draft: defaultDraft(),
         baseline: defaultDraft(),
+        script: defaultScriptDraft(),
+        scriptBaseline: defaultScriptDraft(),
         step: 'meta',
         deps: deps ?? null,
       });
@@ -228,13 +280,16 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
         seedError: `类型「${seed.type}」非 custom 定义（builtin 不可再编辑——01 §5.3 PATH1 编辑对象为既有自定义定义）`,
         draft: defaultDraft(),
         baseline: defaultDraft(),
+        script: defaultScriptDraft(),
+        scriptBaseline: defaultScriptDraft(),
         step: 'meta',
         deps: deps ?? null,
       });
       return;
     }
     const draft = normalizeForEditor(existing); // edit：既有 custom 再编辑（§1）
-    set({ open: true, mode: 'edit', seedError: null, draft, baseline: clone(draft), step: 'meta', deps: deps ?? null });
+    const script = defaultScriptDraft(); // 资产文本装载=装配点注入面（T6-09 保存链接线前空起）
+    set({ open: true, mode: 'edit', seedError: null, draft, baseline: clone(draft), script, scriptBaseline: clone(script), step: 'meta', deps: deps ?? null });
   },
 
   closeEditor: () => set({ open: false }),
@@ -270,6 +325,11 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
     set({ draft: { ...s.draft, io } });
   },
 
+  patchScript: (patch) => {
+    const s = get();
+    set({ script: { ...s.script, ...patch } }); // 环节 4 草稿（内存——lang 切换=只改 lang 键，py/ts 文本各自存续）
+  },
+
   goToStep: (target) => {
     const s = get();
     if (!s.open || s.seedError !== null) return;
@@ -277,7 +337,7 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
       set({ step: target }); // 回退/原地永远自由（往返编辑）
       return;
     }
-    const errors = computeStepErrors(s.draft, s.deps ?? undefined, s.mode === 'edit' ? s.draft.type : undefined);
+    const errors = computeStepErrors(s.draft, s.deps ?? undefined, s.mode === 'edit' ? s.draft.type : undefined, s.script);
     for (let i = STEP_INDEX[s.step]; i < STEP_INDEX[target]; i++) {
       const key = EDITOR_STEPS[i];
       if (key === undefined || (errors[key]?.length ?? 0) > 0) return; // 门未过——不得前进
@@ -301,7 +361,8 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
 
   reset: () => {
     const draft = defaultDraft();
-    set({ open: false, mode: 'create', draft, baseline: clone(draft), step: 'meta', seedError: null, deps: null });
+    const script = defaultScriptDraft();
+    set({ open: false, mode: 'create', draft, baseline: clone(draft), script, scriptBaseline: clone(script), step: 'meta', seedError: null, deps: null });
   },
 }));
 

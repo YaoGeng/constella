@@ -1,64 +1,66 @@
-# S-7 spike 专用 compose —— 与生产在营产品完全隔离：
-#   独立项目 constella-s7、自带一次性 PG 16（不接 infra 网络、不碰 aim-pg）、
-#   宿主端口仅绑 127.0.0.1:8051、restart=no（spike 不驻留）、内存各限 512M。
-# 对齐部署标准 §6 接入契约（除第 6 条「连 aim-pg」外，spike 用自带 pg）与 §6.1 容器规范
-# （差异：restart 由 unless-stopped 改 no —— spike 红线要求用后即清）。
-name: constella-s7
+# S-01 生产版 compose（TDD-S-01 §3 DeployArtifacts；S-7 spike 隔离版就地升级）——对齐部署标准 §6.2 模板：
+#   去 spike 自带一次性 pg（接入契约#6：接 infra external 网络，连接串按容器名指向 aim-pg:5432 专属账号）、
+#   restart unless-stopped / 内存限 512M / json-file 日志轮转 10m×3 / 版本镜像标签禁 latest（§6.1）、
+#   端口仅宿主回环 127.0.0.1:8051（契约#1 / §2.3 端口表 8051 起按 10 递增位）。
+#   契约#2：全部配置经环境变量注入、密钥不进镜像——env_file .env + ${VAR:?} 强制关键项存在（漏写拒起）。
+# 项目名=产品目录名 constella（§6.1「每产品一个 compose 项目，项目名与产品目录同名」）
+name: constella
 
 services:
-  pg:
-    image: postgres:16.14-alpine
-    restart: "no"
-    environment:
-      POSTGRES_USER: constella_s7
-      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD must be set in .env}
-      POSTGRES_DB: constella_s7
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks: [s7net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U constella_s7 -d constella_s7"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   server:
-    build: .
-    image: constella-s7-server:spike
-    restart: "no"
+    # 构建上下文=仓库根（pnpm workspace 构建：COPY pnpm-lock/workspace/根 package.json+shared+server——
+    # 见 Dockerfile builder 段）；开发机/CI 构建命令形（§6.5 服务器不构建）：
+    #   docker build -f server/Dockerfile -t constella-server:<V> .      （于仓库根执行）
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    # §6.5 服务器不做构建：镜像由 CI（或直推）分发——见 server/deploy/DEPLOY.md 步 3；
+    # 标签=CONSTELLA_VERSION 必填（.env 提供），禁 latest（§6.1）；
+    # registry 前缀待「仓库推送 GitHub」确认门通过后按 DEPLOY.md 步 3 登记补全
+    image: "constella-server:${CONSTELLA_VERSION:?CONSTELLA_VERSION must be set in .env (latest tag forbidden, deploy-standard 6.1)}"
+    # §6.1：所有服务 restart: unless-stopped（spike 版为 no——用后即清口径，生产改回）
+    restart: unless-stopped
+    # nginx 反代按容器名寻址 constella-server:8051（§5.3 注记——compose 默认名 <project>-<service>-N，
+    # 显式钉死容器名与 deploy/nginx/constella.aim8848.com.conf 的 $upstream_constella 一致）
+    container_name: constella-server
     env_file: .env
     environment:
+      # 契约#2：密钥不进镜像（镜像内无任何真实凭据），运行期 env 注入；
+      # ${VAR:?}＝必填强制兜底 .env 漏写（forge 先例「非机密契约值钉进 environment 块」）
       APP_ENV: prod
       NODE_ENV: production
       PORT: "8051"
-      DATABASE_URL: postgresql://constella_s7:${PG_PASSWORD}@pg:5432/constella_s7?schema=public
+      # 契约#6：连接串主机名=容器名（.env 内形 postgresql://constella_app:<密码>@aim-pg:5432/constella?schema=public）
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL must be set in .env}"
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET must be set in .env}"
+      # T2-11 AdminSeed：应用启动钩子幂等首建（src/index.ts；未设则 noop 跳过）——生产强制提供首个 ADMIN
+      ADMIN_EMAIL: "${ADMIN_EMAIL:?ADMIN_EMAIL must be set in .env}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}"
+      # 可选项回落默认（与 src/utils/env.ts 缺省一致；admin 同域经反代免 CORS=A-01 生产口径）
+      CORS_ORIGINS: ${CORS_ORIGINS:-app://}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-disk}
+      STORAGE_DIR: ${STORAGE_DIR:-storage}
     ports:
-      - "127.0.0.1:8051:8051" # 契约第 1 条：仅绑回环，禁止 0.0.0.0
-    depends_on:
-      pg:
-        condition: service_healthy
-    networks: [s7net]
+      - "127.0.0.1:8051:8051" # 契约#1：容器内 0.0.0.0:8051，宿主仅绑回环，禁止 0.0.0.0（§6.1）
+    networks: [infra] # 契约#6：infra external（§6.2——由 /opt/aim/infra 创建，承载 aim-pg）；单容器产品无内部网络需求
+    volumes:
+      # disk 存储驱动对象目录（TDD-S-05；market 包产物落盘位）——named volume 保容器重建不丢对象、
+      # Docker 管理属主（容器内非 root 用户 app 可写）
+      - constella-storage:/app/storage
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 512M # §6.1：后端容器默认内存限制
     logging:
-      driver: json-file
+      driver: json-file # §6.1/契约#4：stdout 日志由 json-file 驱动统一轮转
       options:
         max-size: "10m"
         max-file: "3"
+    # 健康检查=镜像 HEALTHCHECK /healthz（契约#3，见 Dockerfile）；compose 不重复声明以免两处漂移
 
 volumes:
-  pgdata:
+  constella-storage:
 
 networks:
-  s7net:
+  infra:
+    external: true # §6.2 模板：由 /opt/aim/infra 创建；未起 infra 时 compose up 会显式报错（不静默自建）

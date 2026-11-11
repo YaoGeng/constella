@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // admin-smoke.mjs —— T6-01（TDD-A-01 §6.4）登录/守卫交互冒烟：playwright-core 无头 Edge 六场景。
 //
-// 用法：node scripts/admin-smoke.mjs [baseUrl=http://127.0.0.1:8051] [scenario=login|users|reviews|dashboard]（仓库根；任意 cwd 均可）
+// 用法：node scripts/admin-smoke.mjs [baseUrl=http://127.0.0.1:8051] [scenario=login|users|reviews|dashboard|package]（仓库根；任意 cwd 均可）
 //   无参/缺省＝login 六登录场景（T6-01 兼容）；第二参 users＝用户管理页 a~g 场景（T6-02/TDD-A-02 §6.2）；
-//   第二参 reviews＝审核队列页 a~d 场景（T6-03/TDD-A-03 §6.2）；
-//   第二参 dashboard＝运营看板页 a~d 场景（T6-05/TDD-A-05 §6.2）
+//   第二参 reviews＝审核队列页 a~e 场景（T6-03/TDD-A-03 §6.2 a~d＋e 页码回落回归——batch-2 登记③随 T6-04 收口）；
+//   第二参 dashboard＝运营看板页 a~d 场景（T6-05/TDD-A-05 §6.2）；
+//   第二参 package＝包详情工作台 a~g 场景（T6-04/TDD-A-04 §6.2）
 //
 // 拓扑（镜像部署标准 §5.3/§8 步 4 生产形态：admin 与 server 同域经反代免 CORS）：
 //   无头 Edge → http://127.0.0.1:<ephemeral>/admin/（本脚本自管的静态托管，admin/dist）
@@ -27,12 +28,15 @@
 //   批量测试号直插 DB（register 端点限流 10/min——S-01 RATE_LIMIT_RULES，≥20 连续注册必触顶；
 //   DB 兜底先例=ensureAdminInDb/T5-11）；交互测试号（target/hit/ghost）仍经 POST /api/auth/register。
 //
-// reviews 场景（T6-03/TDD-A-03 §6.2 a~d 逐条；测试数据=DB 直插 3 个 PENDING 包——T5-11 publish-e2e
-//   落库终态等价形〔Package+PackageVersion+latestVersionId，略去 zip 管线——队列面不触存储〕，固定 id 幂等）：
+// reviews 场景（T6-03/TDD-A-03 §6.2 a~d＋e 页码回落回归逐条；测试数据=DB 直插 3 个 PENDING 包——T5-11
+//   publish-e2e 落库终态等价形〔Package+PackageVersion+latestVersionId，略去 zip 管线——队列面不触存储〕，
+//   固定 id 幂等）：
 //   a) 队列行数=server items 数、perms 列渲染 PermTags（六标签预设色）；b) 点「审核」→ URL 变 /packages/:id
 //   （详情渲染断言归 A-04 §6）；c) 另一会话（浏览器外独立 admin token）先审掉某包后 goBack 返回本页
 //   → 该行消失（无陈旧残留——重挂载重取，staleTime=0 设计值）；d) 清空 pending（经 review 端点 reject，
-//   走 server 状态机留 ReviewRecord）→ QueueEmptyState「队列已清空」＋手动刷新渲染。
+//   走 server 状态机留 ReviewRecord）→ QueueEmptyState「队列已清空」＋手动刷新渲染；
+//   e) 页码回落（batch-2 登记③ MINOR 随 T6-04 收口）：直插 22 个 pending（两页）→ 他会话清短至 1 →
+//   停留页面点陈旧分页第 2 页（server 返回空 items/total=1）→ 回落有效末页重取出行、误「已清空」消除。
 //
 // dashboard 场景（T6-05/TDD-A-05 §6.2 a~d 逐条；测试数据=DB 直插 1 个 PENDING 包〔c 场景 pendingCount
 //   非零基线，固定 id 幂等〕＋DownloadStat 今日 2 下 1 装/昨日 1 下 2 装〔「2 天有量+5 天空」；id 按日确定性
@@ -42,13 +46,25 @@
 //   c) pendingCount 卡点击 → /reviews，列表计数与 pendingCount 对账；d) console 断言无 [antd: Statistic]
 //   valueStyle 弃用告警（S-8 告警复测——页面交互全程采集）。
 //
+// package 场景（T6-04/TDD-A-04 §6.2 a~g 逐条；测试数据=DB 直插作者号＋四包——A/B/C PENDING 起步、D 直插
+//   APPROVED〔四状态经推进全覆盖：通过/驳回/并发 409/下架〕，固定 id 幂等＋重跑重置种子状态；A 含
+//   manifest.scripts 双脚本＋双版本＋非零计量＋真实 zip 落盘〔storageKey=packages/<id>/<semver>.zip——
+//   g 解包校验用，jszip 经 client 包 resolve〕；清扫=ownerUserId 全量两轮删除〔market-*.test.ts afterAll 先例〕）：
+//   a) 从 /reviews 行「审核」跳入 → 七分区渲染齐全（元数据/perms/manifest 摘要/脚本清单/版本/计量/动作区，
+//      内容对 server 真值逐项对账）；b) PENDING「通过」→ 跳回 /reviews 且出队；c) 驳回不填理由=前端必填拦截
+//   （零请求）；填理由 → REJECTED 只读（停留本页）；d) 并发 409：A 会话（API 直审）通过后 B 会话（页面）驳回
+//   → 「已被其他管理员处理」＋失效重取刷成 APPROVED 态（下架动作出现/驳回入口消失）；e) APPROVED「下架」
+//   填理由 → OFFLINE 只读终态；f) OFFLINE/REJECTED 页无动作区；g) 下载预检 → <semver>.zip 且本地解包可读。
+//
 // 退出码：所选场景全绿 exit 0；任一失败 exit 1（逐场景 [ok]/[fail]）。
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import fs from 'node:fs/promises';
 import http from 'node:http';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -673,6 +689,45 @@ async function seedReviewQueue() {
   }
 }
 
+// e 场景批量包（22 个＝两页；id 末段 100000000000+i＝12 位数字 hex 合式、按序确定——重跑幂等）
+const REVIEWS_FALLBACK_COUNT = 22;
+const reviewsFallbackPkgId = (i) => `33333330-6030-4000-8000-${String(100000000000 + i)}`;
+const reviewsFallbackVersionId = (i) => `33333331-6030-4000-8000-${String(100000000000 + i)}`;
+
+/** e 场景数据：22 个 pending 包直插（d 清空后第二批；seedReviewQueue 同款形——重置 PENDING＋回填指针） */
+async function seedReviewsFallbackBulk() {
+  const requireFromServer = createRequire(path.join(serverDir, 'package.json'));
+  const { Client } = requireFromServer('pg');
+  const connectionString = serverDatabaseUrl();
+  if (!connectionString) throw new Error('无法定位 DATABASE_URL（server/.env / process.env）');
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    for (let i = 0; i < REVIEWS_FALLBACK_COUNT; i++) {
+      const id = reviewsFallbackPkgId(i);
+      await client.query(
+        `INSERT INTO "Package" (id, kind, name, summary, "ownerUserId", status, perms,
+           "downloadCount", "installCount", "starCount", "createdAt", "updatedAt")
+         VALUES ($1, 'PACK', $2, 'smoke 页码回落用', $3, 'PENDING', '{}'::text[], 0, 0, 0, now(), now())
+         ON CONFLICT (id) DO NOTHING`,
+        [id, `T603 回落包${String(i + 1).padStart(2, '0')}`, REVIEWS_AUTHOR_ID],
+      );
+      await client.query(
+        `INSERT INTO "PackageVersion" (id, "packageId", semver, "storageKey", checksum, "sizeBytes", manifest, "createdAt")
+         VALUES ($1, $2, '1.0.0', $3, $4, 10, '{}'::jsonb, now())
+         ON CONFLICT (id) DO NOTHING`,
+        [reviewsFallbackVersionId(i), id, `smoke/${id}/1.0.0.zip`, `sha256:${'0'.repeat(64)}`],
+      );
+      await client.query(
+        `UPDATE "Package" SET status = 'PENDING', "latestVersionId" = $2, "updatedAt" = now() WHERE id = $1`,
+        [id, reviewsFallbackVersionId(i)],
+      );
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 /** 「另一会话」直审 POST（独立 admin token——浏览器会话之外的第二管理员会话，c/d 场景用） */
 function adminApiPost(baseUrl, token, pathname, payload) {
   return fetchJson(`${baseUrl}${pathname}`, {
@@ -764,6 +819,38 @@ async function runReviewsScenarios(page, origin, baseUrl) {
   await page.getByRole('button', { name: '手动刷新' }).click(); // 手动刷新可点且重取后仍空态
   await page.getByTestId('reviews-empty').waitFor({ timeout: 15000 });
   report('d) 空队列 → QueueEmptyState 渲染（含手动刷新）', true, '「队列已清空」＋手动刷新重取仍空态');
+
+  // e) 页码回落（batch-2 登记③ MINOR 随 T6-04 收口）：直插 22 个 pending（两页）→ 他会话清短至 1 →
+  //    停留页面点陈旧分页第 2 页（server 返回空 items/total=1）→ 回落有效末页重取出行；「已清空」空态
+  //    仅在真无数据（total=0）时显示——d 已覆盖 total=0 分支，本条覆盖「超末页非空」分支
+  await seedReviewsFallbackBulk();
+  await page.goto(`${origin}/admin/reviews`);
+  await page.getByTestId('reviews-total').waitFor({ timeout: 15000 });
+  await page.locator('.ant-pagination-item-2').waitFor({ timeout: 15000 }); // 22 行 → 两页分页可见
+  const fallbackIds = Array.from({ length: REVIEWS_FALLBACK_COUNT }, (_, i) => reviewsFallbackPkgId(i));
+  for (const id of fallbackIds.slice(1)) {
+    // 22 个只留 1（确定性按本批固定 id reject——走 server 状态机留痕）
+    await adminApiPost(baseUrl, token, `/api/admin/packages/${id}/review`, {
+      action: 'reject',
+      reason: 'smoke 页码回落清短（T6-03 e 场景）',
+    });
+  }
+  // 页面仍持陈旧 total（分页第 2 页可点）→ 请求超末页：items=[]/total=1 → 回落第 1 页重取出 1 行
+  await page.locator('.ant-pagination-item-2').click();
+  await page.waitForFunction(
+    () => {
+      const active = document.querySelector('.ant-pagination-item-active');
+      return active?.textContent?.trim() === '1' && document.querySelectorAll('tr.ant-table-row').length > 0;
+    },
+    null,
+    { timeout: 15000 },
+  );
+  const falseEmptyGone = (await page.getByTestId('reviews-empty').count()) === 0;
+  report(
+    'e) 页码回落：停超末页回落有效末页、误「已清空」消除',
+    falseEmptyGone,
+    '清短 22→1 后点第 2 页=空 items/total=1 → 回落第 1 页行渲染（空态未误显）',
+  );
 }
 
 // —— dashboard 场景（T6-05/TDD-A-05 §6.2 a~d）—————————————————————
@@ -958,14 +1045,430 @@ async function runDashboardScenarios(page, origin, baseUrl) {
   );
 }
 
+// —— package 场景（T6-04/TDD-A-04 §6.2 a~g）—————————————————————
+
+// 测试数据（固定 id 幂等＋重跑重置种子状态）：作者号＋四包——A/B/C PENDING 起步、D 直插 APPROVED
+// （四状态经场景推进全覆盖：b 通过→APPROVED / c 驳回→REJECTED / d 并发 409→APPROVED 态重渲染 / e 下架→OFFLINE）；
+// A 带 manifest.scripts 双脚本＋双版本（脚本清单/版本表渲染面；版本 createdAt 显式隔日——asc 排序末位=最新确定）
+// ＋非零计量（MeterCards 对账）＋真实 zip 落盘（g 下载预检解包可读）。
+const PKG_AUTHOR_ID = '11111111-6040-4000-8000-0000000000a1';
+const PKG_AUTHOR_EMAIL = 't604-author@constella.test'; // DB 直插，不占注册限流（reviews/dashboard 场景同款口径）
+const PKG_PRECHECK_SEMVER = '1.1.0'; // A 最新版本（下载预检文件名 <semver>.zip 对齐）
+const PKG_WORKBENCH = [
+  {
+    id: '11111111-6040-4000-8000-0000000000b1',
+    kind: 'NODE',
+    name: 'T604 工作台包A（通过）',
+    summary: 'smoke 七分区渲染＋通过＋下载预检用',
+    perms: ['CDP', '网络', '文件'],
+    seedStatus: 'PENDING',
+    downloadCount: 5,
+    installCount: 3,
+    manifest: {
+      kind: 'node',
+      name: 'T604 工作台包A（通过）',
+      summary: 'manifest 摘要区对账用',
+      version: '1.1.0',
+      scripts: {
+        xhs_search: { file: 'scripts/xhs_search.py', lang: 'python', entry: 'run' },
+        page_fetch: { file: 'scripts/page_fetch.ts', lang: 'ts', entry: 'main' },
+      },
+    },
+    versions: [
+      { id: '11111111-6040-4000-8000-0000000000b2', semver: '1.0.0', daysAgo: 2 },
+      { id: '11111111-6040-4000-8000-0000000000b3', semver: '1.1.0', daysAgo: 0, zip: true },
+    ],
+  },
+  {
+    id: '11111111-6040-4000-8000-0000000000c1',
+    kind: 'PACK',
+    name: 'T604 工作台包B（驳回）',
+    summary: 'smoke 驳回必填拦截＋REJECTED 只读用',
+    perms: ['AI'],
+    seedStatus: 'PENDING',
+    downloadCount: 0,
+    installCount: 0,
+    manifest: { kind: 'pack', name: 'T604 工作台包B（驳回）', version: '0.9.0' },
+    versions: [{ id: '11111111-6040-4000-8000-0000000000c2', semver: '0.9.0', daysAgo: 0 }],
+  },
+  {
+    id: '11111111-6040-4000-8000-0000000000d1',
+    kind: 'FLOW',
+    name: 'T604 工作台包C（并发409）',
+    summary: 'smoke 两会话并发决策 409 承接用',
+    perms: [],
+    seedStatus: 'PENDING',
+    downloadCount: 1,
+    installCount: 2,
+    manifest: { kind: 'flow', name: 'T604 工作台包C（并发409）', version: '1.0.0' },
+    versions: [{ id: '11111111-6040-4000-8000-0000000000d2', semver: '1.0.0', daysAgo: 0 }],
+  },
+  {
+    id: '11111111-6040-4000-8000-0000000000e1',
+    kind: 'PACK',
+    name: 'T604 工作台包D（下架）',
+    summary: 'smoke APPROVED 下架→OFFLINE 终态用',
+    perms: ['文件'],
+    seedStatus: 'APPROVED',
+    downloadCount: 7,
+    installCount: 4,
+    manifest: { kind: 'pack', name: 'T604 工作台包D（下架）', version: '2.0.0' },
+    versions: [{ id: '11111111-6040-4000-8000-0000000000e2', semver: '2.0.0', daysAgo: 1 }],
+  },
+];
+
+/** 构造预检 zip（manifest.json＋scripts/＋config/——X-01 四件套缩样；jszip 经 client 包 resolve。
+ *  固定条目日期 → 字节确定 → checksum 重跑稳定（DB 行 ON CONFLICT 不改写，存储同键覆写） */
+async function buildPrecheckZip() {
+  const JSZip = requireFromClient('jszip');
+  const FIXED_DATE = new Date(Date.UTC(2026, 0, 1));
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify(PKG_WORKBENCH[0].manifest, null, 2), { date: FIXED_DATE });
+  zip.file('scripts/xhs_search.py', '# t604 precheck placeholder\n', { date: FIXED_DATE });
+  zip.file('scripts/page_fetch.ts', '// t604 precheck placeholder\n', { date: FIXED_DATE });
+  zip.file('config/default.yaml', '# t604 precheck placeholder\n', { date: FIXED_DATE });
+  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+  return { buffer, checksum: `sha256:${createHash('sha256').update(buffer).digest('hex')}` };
+}
+
+/**
+ * DB 直插工作台测试数据（幂等＝固定 id＋重置回种子状态——上一轮决策后可重跑）＋预检 zip 落盘。
+ * zip 落盘：disk 驱动 STORAGE_DIR="storage" 相对 server 进程 cwd（pnpm -F ./server exec 同款约定＝
+ * server/storage）；getStream 只读对象文件不读 .meta.json（DiskStorage 实现），故仅写 zip 本体。
+ * 复用态 server 若自仓库根启动（storage 根不同）——repoRoot/storage 已存在时补写同键对象双根幂等。
+ * Package.createdAt=now()（队列新→旧恒置顶——翻页免疫环境残留行）；版本 createdAt 显式隔日。
+ */
+async function seedPackageWorkbench() {
+  const { buffer: zipBuffer, checksum: zipChecksum } = await buildPrecheckZip();
+  const zipKey = `packages/${PKG_WORKBENCH[0].id}/${PKG_PRECHECK_SEMVER}.zip`;
+  const writeZipTo = async (rootDir) => {
+    const zipPath = path.join(rootDir, ...zipKey.split('/'));
+    await fs.mkdir(path.dirname(zipPath), { recursive: true });
+    await fs.writeFile(zipPath, zipBuffer);
+  };
+  await writeZipTo(path.join(serverDir, 'storage'));
+  const rootStorage = path.join(repoRoot, 'storage');
+  if (existsSync(rootStorage)) {
+    await writeZipTo(rootStorage);
+  }
+
+  const requireFromServer = createRequire(path.join(serverDir, 'package.json'));
+  const { Client } = requireFromServer('pg');
+  const bcryptMod = requireFromServer('bcryptjs');
+  const bcrypt = bcryptMod.default ?? bcryptMod;
+  const connectionString = serverDatabaseUrl();
+  if (!connectionString) throw new Error('无法定位 DATABASE_URL（server/.env / process.env）');
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    const hash = await bcrypt.hash('t604-author-pass', 10);
+    await client.query(
+      `INSERT INTO "User" (id, email, "passwordHash", role, "isAuthor", status, "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'USER', true, 'ACTIVE', now(), now())
+       ON CONFLICT (email) DO NOTHING`,
+      [PKG_AUTHOR_ID, PKG_AUTHOR_EMAIL, hash],
+    );
+    for (const p of PKG_WORKBENCH) {
+      await client.query(
+        `INSERT INTO "Package" (id, kind, name, summary, "ownerUserId", status, perms,
+           "downloadCount", "installCount", "starCount", "createdAt", "updatedAt")
+         VALUES ($1, $2::"PackageKind", $3, $4, $5, $6::"PackageStatus", $7::text[], $8, $9, 0, now(), now())
+         ON CONFLICT (id) DO NOTHING`,
+        [p.id, p.kind, p.name, p.summary, PKG_AUTHOR_ID, p.seedStatus, p.perms, p.downloadCount, p.installCount],
+      );
+      let latestVersionId = null;
+      for (const v of p.versions) {
+        // zip 版本以真实字节对齐 sizeBytes/checksum；其余版本缩样占位（队列/详情面不触存储）
+        const sizeBytes = v.zip ? zipBuffer.length : 2048;
+        const checksum = v.zip ? zipChecksum : `sha256:${'0'.repeat(64)}`;
+        await client.query(
+          `INSERT INTO "PackageVersion" (id, "packageId", semver, "storageKey", checksum, "sizeBytes", manifest, "createdAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now() - ($8 || ' days')::interval)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            v.id,
+            p.id,
+            v.semver,
+            `packages/${p.id}/${v.semver}.zip`,
+            checksum,
+            sizeBytes,
+            JSON.stringify(p.manifest),
+            String(v.daysAgo),
+          ],
+        );
+        latestVersionId = v.id;
+      }
+      // 重置回种子状态＋回填 latestVersion 指针（上一轮通过/驳回/下架后可重跑）
+      await client.query(
+        `UPDATE "Package" SET status = $2::"PackageStatus", "latestVersionId" = $3, "updatedAt" = now() WHERE id = $1`,
+        [p.id, p.seedStatus, latestVersionId],
+      );
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+/** 场景清扫（market-*.test.ts afterAll 先例）：按 ownerUserId 全量两轮删除——用户→名下包→
+ *  指针清空→审核留痕/计量/版本级联→用户；两轮防 in-flight 写入漏删。storage zip 对象残留＝
+ *  同键幂等覆写，无膨胀（清扫只治 DB 行——zip 无引用即死对象）。 */
+async function cleanupPackageWorkbench() {
+  const requireFromServer = createRequire(path.join(serverDir, 'package.json'));
+  const { Client } = requireFromServer('pg');
+  const connectionString = serverDatabaseUrl();
+  if (!connectionString) throw new Error('无法定位 DATABASE_URL（server/.env / process.env）');
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    for (let round = 0; round < 2; round++) {
+      const users = await client.query('SELECT id FROM "User" WHERE email = $1', [PKG_AUTHOR_EMAIL]);
+      if (users.rows.length === 0) break;
+      const userIds = users.rows.map((r) => r.id);
+      const pkgs = await client.query('SELECT id FROM "Package" WHERE "ownerUserId" = ANY($1)', [userIds]);
+      const pkgIds = pkgs.rows.map((r) => r.id);
+      if (pkgIds.length > 0) {
+        await client.query('UPDATE "Package" SET "latestVersionId" = NULL WHERE id = ANY($1)', [pkgIds]);
+        await client.query('DELETE FROM "ReviewRecord" WHERE "packageId" = ANY($1)', [pkgIds]);
+        await client.query('DELETE FROM "DownloadStat" WHERE "packageId" = ANY($1)', [pkgIds]);
+        await client.query('DELETE FROM "PackageVersion" WHERE "packageId" = ANY($1)', [pkgIds]);
+        await client.query('DELETE FROM "Package" WHERE id = ANY($1)', [pkgIds]);
+      }
+      await client.query('DELETE FROM "User" WHERE id = ANY($1)', [userIds]);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+/** package 场景 a~g 主流程（顺序依赖：a 七分区基线 → b 通过 → c 驳回 → d 并发 409 → e 下架 → f 只读 → g 预检） */
+async function runPackageScenarios(page, origin, baseUrl) {
+  try {
+    await seedPackageWorkbench();
+    console.log('[setup] package 测试数据: DB 直插作者＋四包（A/B/C PENDING＋D APPROVED；A 含 scripts/双版本/计量/真实 zip）');
+    const token = await adminAccessToken(baseUrl); // 「另一会话」凭据（d 场景 A 会话 API 直审＋真值对账）
+
+    // 前置：登录 ADMIN 并整页打开 /reviews（未登录守卫已由 login/users 场景覆盖，不重复立场景）
+    await page.goto(`${origin}/admin/reviews`);
+    await page.waitForURL(/\/admin\/login$/, { timeout: 15000 });
+    await page.getByTestId('login-submit').waitFor({ timeout: 15000 });
+    await fillLoginAndSubmit(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+    await page.waitForURL(/\/admin\/dashboard$/, { timeout: 15000 });
+    await page.goto(`${origin}/admin/reviews`);
+    await page.getByTestId('reviews-total').waitFor({ timeout: 15000 });
+
+    const [pkgA, pkgB, pkgC, pkgD] = PKG_WORKBENCH;
+
+    // a) 从 /reviews 行「审核」跳入 → 七分区渲染齐全（对 server 真值逐项对账）
+    const truthA = await adminApiGet(baseUrl, token, `/api/admin/packages/${pkgA.id}`);
+    await page.locator(`tr[data-row-key="${pkgA.id}"]`).getByRole('button', { name: '审核' }).click();
+    await page.waitForURL(new RegExp(`/admin/packages/${pkgA.id}$`), { timeout: 15000 });
+    await page.getByTestId('pkg-meta').waitFor({ timeout: 15000 }); // 详情数据到位锚（count 不自动等待）
+    const SECTIONS = ['pkg-meta', 'pkg-perms', 'pkg-manifest', 'pkg-scripts', 'pkg-versions', 'pkg-meters', 'pkg-actions'];
+    const missingSections = [];
+    for (const tid of SECTIONS) {
+      if ((await page.getByTestId(tid).count()) === 0) missingSections.push(tid);
+    }
+    const latestA = truthA.body?.versions?.[truthA.body.versions.length - 1];
+    const metaText = (await page.getByTestId('pkg-meta').textContent()) ?? '';
+    const manifestText = (await page.getByTestId('pkg-manifest').textContent()) ?? '';
+    const scriptRows = await page.getByTestId('pkg-scripts').locator('tr.ant-table-row').count();
+    const versionRows = await page.getByTestId('pkg-versions').locator('tr.ant-table-row').count();
+    const permTagCount = await page.getByTestId('pkg-perms').locator('.ant-tag').count();
+    const meterNum = async (tid) =>
+      Number((((await page.getByTestId(tid).textContent()) ?? '').replace(/[^0-9]/g, '')));
+    const aOk =
+      truthA.status === 200 &&
+      missingSections.length === 0 &&
+      metaText.includes(pkgA.name) &&
+      latestA !== undefined &&
+      metaText.includes(latestA.checksum) &&
+      metaText.includes(latestA.semver) &&
+      manifestText.includes(truthA.body.manifest.version) &&
+      manifestText.includes(truthA.body.manifest.name) &&
+      scriptRows === Object.keys(truthA.body.manifest.scripts ?? {}).length &&
+      versionRows === truthA.body.versions.length &&
+      permTagCount === truthA.body.perms.length &&
+      (await meterNum('pkg-meter-download')) === truthA.body.downloadCount &&
+      (await meterNum('pkg-meter-install')) === truthA.body.installCount;
+    report(
+      'a) 从 /reviews「审核」跳入 → 七分区渲染齐全',
+      aOk,
+      aOk
+        ? `分区 7/7；脚本 ${scriptRows} 行/版本 ${versionRows} 行/perm ${permTagCount} 标签；下载 ${truthA.body.downloadCount}/装 ${truthA.body.installCount} 对齐 server`
+        : `缺分区=[${missingSections.join(',')}]（truth=${truthA.status}）`,
+    );
+
+    // b) PENDING「通过」→ 跳回 /reviews 且出队（URL 变化＋行消失＋对端终态）
+    await page.getByTestId('pkg-action-approve').click();
+    await page.getByText('确认通过该包？').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '确认通过' }).click();
+    await page.waitForURL(/\/admin\/reviews$/, { timeout: 15000 });
+    await page.locator(`tr[data-row-key="${pkgB.id}"]`).waitFor({ timeout: 15000 }); // 表格已渲染锚（B 行仍在队）
+    // 重挂载先渲染缓存页（含 A 陈旧行）再重取——等 A 行 detached 才判定出队（count 会抢在重取前误报残留）
+    await page.locator(`tr[data-row-key="${pkgA.id}"]`).waitFor({ state: 'detached', timeout: 15000 });
+    const rowGone = (await page.locator(`tr[data-row-key="${pkgA.id}"]`).count()) === 0;
+    const queueTruth = await adminApiGet(baseUrl, token, '/api/admin/reviews?status=pending&page=1');
+    const stillQueued = (queueTruth.body?.items ?? []).some((it) => it.packageId === pkgA.id);
+    const detailA = await adminApiGet(baseUrl, token, `/api/admin/packages/${pkgA.id}`);
+    const bOk = rowGone && !stillQueued && detailA.body?.status === 'approved';
+    report(
+      'b) PENDING 通过 → 跳回 /reviews 且出队',
+      bOk,
+      `URL=${page.url()}；A 行${rowGone ? '已出队' : '残留'}；server status=${detailA.body?.status}`,
+    );
+
+    // c) 驳回：不填理由=前端必填拦截（零 review POST）；填理由 → REJECTED 只读（停留本页）
+    await page.locator(`tr[data-row-key="${pkgB.id}"]`).getByRole('button', { name: '审核' }).click();
+    await page.waitForURL(new RegExp(`/admin/packages/${pkgB.id}$`), { timeout: 15000 });
+    let rejectPosts = 0;
+    const countRejectPost = (req) => {
+      if (req.method() === 'POST' && /\/api\/admin\/packages\/[^/]+\/review$/.test(req.url())) rejectPosts += 1;
+    };
+    page.on('request', countRejectPost);
+    await page.getByTestId('pkg-action-reject').click();
+    await page.locator('.ant-modal .ant-btn-primary').waitFor({ timeout: 10000 });
+    await clickModalOk(page); // 空理由提交
+    await page.getByText('理由不能为空').waitFor({ timeout: 10000 });
+    await sleep(700); // 越过渲染窗口，确证必填拦截零请求（users e 场景同款）
+    page.off('request', countRejectPost);
+    const intercepted = rejectPosts === 0;
+    await page.getByPlaceholder('请输入理由（必填，将随操作留痕）').fill('t604 驳回理由（c 场景）');
+    await clickModalOk(page);
+    await page.waitForFunction(
+      (label) => document.querySelector('[data-testid="pkg-status"]')?.textContent?.includes(label),
+      '已驳回',
+      { timeout: 10000 },
+    );
+    const cActionsGone = (await page.getByTestId('pkg-actions').count()) === 0;
+    const cUrlStays = new RegExp(`/admin/packages/${pkgB.id}$`).test(page.url());
+    const truthB = await adminApiGet(baseUrl, token, `/api/admin/packages/${pkgB.id}`);
+    const cOk = intercepted && cActionsGone && cUrlStays && truthB.body?.status === 'rejected';
+    report(
+      'c) 驳回不填理由必填拦截；填理由 → REJECTED 只读（停留本页）',
+      cOk,
+      `前端拦截=${intercepted}（空理由 review POST=${rejectPosts}）；动作区${cActionsGone ? '已隐' : '残留'}；URL=${page.url()}；server status=${truthB.body?.status}`,
+    );
+
+    // d) 并发 409：两会话同开一 PENDING 包——A 会话（API）先通过，B 会话（页面）再驳回 →
+    //    「已被其他管理员处理」＋失效重取刷成 APPROVED 态（下架动作出现/驳回入口消失/URL 不变）
+    await page.goto(`${origin}/admin/reviews`);
+    await page.getByTestId('reviews-total').waitFor({ timeout: 15000 });
+    await page.locator(`tr[data-row-key="${pkgC.id}"]`).getByRole('button', { name: '审核' }).click();
+    await page.waitForURL(new RegExp(`/admin/packages/${pkgC.id}$`), { timeout: 15000 });
+    await page.getByTestId('pkg-action-reject').waitFor({ timeout: 15000 }); // B 视角 PENDING 动作集已渲染
+    const approveByA = await adminApiPost(baseUrl, token, `/api/admin/packages/${pkgC.id}/review`, {
+      action: 'approve',
+    });
+    await page.getByTestId('pkg-action-reject').click();
+    await page.getByPlaceholder('请输入理由（必填，将随操作留痕）').fill('t604 并发驳回（应 409）');
+    await clickModalOk(page);
+    await page.getByText('已被其他管理员处理').waitFor({ timeout: 10000 });
+    await page.waitForFunction(
+      (label) => document.querySelector('[data-testid="pkg-status"]')?.textContent?.includes(label),
+      '已通过',
+      { timeout: 10000 },
+    );
+    const dOfflineVisible = (await page.getByTestId('pkg-action-offline').count()) === 1;
+    const dRejectGone = (await page.getByTestId('pkg-action-reject').count()) === 0;
+    const dUrlStays = new RegExp(`/admin/packages/${pkgC.id}$`).test(page.url());
+    const dOk = approveByA.status === 200 && dOfflineVisible && dRejectGone && dUrlStays;
+    report(
+      'd) 并发 409：A 通过后 B 驳回 → 「已被其他管理员处理」＋页面刷成 APPROVED 态',
+      dOk,
+      `A approve=${approveByA.status}；409 提示已收；APPROVED 动作集（下架=${dOfflineVisible}/驳回已隐=${dRejectGone}）；URL=${page.url()}`,
+    );
+
+    // e) APPROVED「下架」填理由 → OFFLINE 只读终态（PKG_D 直插 APPROVED——不依赖 d 推进）
+    await page.goto(`${origin}/admin/packages/${pkgD.id}`);
+    await page.getByTestId('pkg-action-offline').waitFor({ timeout: 15000 });
+    await page.getByTestId('pkg-action-offline').click();
+    await page.getByPlaceholder('请输入理由（必填，将随操作留痕）').fill('t604 下架理由（e 场景）');
+    await clickModalOk(page);
+    await page.waitForFunction(
+      (label) => document.querySelector('[data-testid="pkg-status"]')?.textContent?.includes(label),
+      '已下架',
+      { timeout: 10000 },
+    );
+    const eActionsGone = (await page.getByTestId('pkg-actions').count()) === 0;
+    const truthD = await adminApiGet(baseUrl, token, `/api/admin/packages/${pkgD.id}`);
+    const eOk = eActionsGone && truthD.body?.status === 'offline';
+    report(
+      'e) APPROVED 下架填理由 → OFFLINE 只读终态',
+      eOk,
+      `动作区${eActionsGone ? '已隐' : '残留'}；server status=${truthD.body?.status}`,
+    );
+
+    // f) OFFLINE/REJECTED 页无动作区（pkg-actions 不在＋状态徽标对——只读双终态）
+    await page.goto(`${origin}/admin/packages/${pkgD.id}`);
+    await page.getByTestId('pkg-meta').waitFor({ timeout: 15000 });
+    const offlineNoActions = (await page.getByTestId('pkg-actions').count()) === 0;
+    const offlineLabelOk = ((await page.getByTestId('pkg-status').textContent()) ?? '').includes('已下架');
+    await page.goto(`${origin}/admin/packages/${pkgB.id}`);
+    await page.getByTestId('pkg-meta').waitFor({ timeout: 15000 });
+    const rejectedNoActions = (await page.getByTestId('pkg-actions').count()) === 0;
+    const rejectedLabelOk = ((await page.getByTestId('pkg-status').textContent()) ?? '').includes('已驳回');
+    const fOk = offlineNoActions && offlineLabelOk && rejectedNoActions && rejectedLabelOk;
+    report(
+      'f) OFFLINE/REJECTED 页无动作区',
+      fOk,
+      `OFFLINE 动作区=${offlineNoActions ? '无' : '有'}；REJECTED 动作区=${rejectedNoActions ? '无' : '有'}`,
+    );
+
+    // g) 下载预检 → <semver>.zip 且本地解包可读（预检端点先行真值探测——失败即此报，免浏览器步骤盲等）
+    await page.goto(`${origin}/admin/packages/${pkgA.id}`);
+    await page.getByTestId('pkg-download').waitFor({ timeout: 15000 });
+    const precheck = await fetch(`${baseUrl}/api/admin/packages/${pkgA.id}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
+    await page.getByTestId('pkg-download').click();
+    const download = await downloadPromise;
+    const suggested = download.suggestedFilename();
+    const savePath = path.join(os.tmpdir(), `t604-precheck-${Date.now()}.zip`);
+    await download.saveAs(savePath);
+    const savedBuffer = await fs.readFile(savePath);
+    const JSZip = requireFromClient('jszip');
+    let unzipped = null;
+    try {
+      const reloaded = await JSZip.loadAsync(savedBuffer);
+      const manifestEntry = reloaded.file('manifest.json');
+      unzipped = manifestEntry ? JSON.parse(await manifestEntry.async('string')) : null;
+    } catch {
+      unzipped = null; // 解包失败（损坏/非 zip）——按 g 断言失败处理
+    }
+    await fs.rm(savePath, { force: true });
+    const gOk =
+      precheck.status === 200 &&
+      suggested === `${PKG_PRECHECK_SEMVER}.zip` &&
+      unzipped !== null &&
+      unzipped.name === pkgA.manifest.name &&
+      unzipped.version === PKG_PRECHECK_SEMVER;
+    report(
+      'g) 下载预检 → <semver>.zip 且本地解包可读',
+      gOk,
+      `端点=${precheck.status}；文件名=${suggested}；manifest.json ${unzipped ? `可读（${unzipped.name}@${unzipped.version}）` : '不可读'}`,
+    );
+  } finally {
+    // 清扫（finally——场景半途失败亦不留残留；ownerUserId 全量两轮删除先例）
+    await cleanupPackageWorkbench();
+    console.log('[setup] package 清扫: t604 作者＋名下包全量删除（两轮）');
+  }
+}
+
 // —— 主流程 ——————————————————————————————————————————————
 
 async function main() {
   const baseUrl = process.argv[2] ?? 'http://127.0.0.1:8051';
   const scenario = process.argv[3] ?? 'login';
-  if (scenario !== 'login' && scenario !== 'users' && scenario !== 'reviews' && scenario !== 'dashboard') {
+  if (
+    scenario !== 'login' &&
+    scenario !== 'users' &&
+    scenario !== 'reviews' &&
+    scenario !== 'dashboard' &&
+    scenario !== 'package'
+  ) {
     throw new Error(
-      `未知场景参数：${scenario}（可用：login（默认，六登录场景）/ users（TDD-A-02 §6.2 a~g）/ reviews（TDD-A-03 §6.2 a~d）/ dashboard（TDD-A-05 §6.2 a~d））`,
+      `未知场景参数：${scenario}（可用：login（默认，六登录场景）/ users（TDD-A-02 §6.2 a~g）/ reviews（TDD-A-03 §6.2 a~e）/ dashboard（TDD-A-05 §6.2 a~d）/ package（TDD-A-04 §6.2 a~g））`,
     );
   }
 
@@ -1012,6 +1515,8 @@ async function main() {
         await runReviewsScenarios(page, origin, baseUrl);
       } else if (scenario === 'dashboard') {
         await runDashboardScenarios(page, origin, baseUrl);
+      } else if (scenario === 'package') {
+        await runPackageScenarios(page, origin, baseUrl);
       } else {
         await scenario1GuardRedirect(page, origin);
         await scenario2WrongPassword(page, origin);
@@ -1033,10 +1538,12 @@ async function main() {
     scenario === 'users'
       ? 'users 场景 a~g'
       : scenario === 'reviews'
-        ? 'reviews 场景 a~d'
+        ? 'reviews 场景 a~e'
         : scenario === 'dashboard'
           ? 'dashboard 场景 a~d'
-          : '六场景';
+          : scenario === 'package'
+            ? 'package 场景 a~g'
+            : '六场景';
   console.log(failed.length === 0 ? `\nadmin-smoke ${label}全绿` : `\nadmin-smoke ${label}失败 ${failed.length}/${results.length}`);
   process.exit(failed.length === 0 ? 0 : 1);
 }

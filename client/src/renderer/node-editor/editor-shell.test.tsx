@@ -7,7 +7,8 @@
 // 原生 setter＋input 事件派发（jsdom 不触发 React 合成 onChange）。
 // 断言面：stepper 六环节往返＋环节门（未过门 next 禁用/跳步被拒）＋StepMeta N1 全字段
 // （source 固定 manual）＋StepPorts 增删/出口命名＋NodeCardPreview 实时反映（端口布局/
-// ✨/参数预览——demo L1360-1387 锚）＋环节 3~6 占位页（随 T6-07/08/09）＋create/edit 路由 UI。
+// ✨/参数预览——demo L1360-1387 锚）＋环节 3/4 实体化（T6-07 StepSchema／T6-08 StepScript
+// ＋StepConfig 两页）＋环节 5~6 占位页（随 T6-09）＋create/edit 路由 UI。
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, beforeEach } from 'vitest';
@@ -249,8 +250,8 @@ describe('环节 2 StepPorts（ins/outs 增删＋出口命名＋卡片预览实�
   });
 });
 
-describe('环节 3 实体化（T6-07 已落 StepSchema）＋环节 4~6 占位页（随 T6-08/09）', () => {
-  it('schema=StepSchema 实表单（占位撤除）；script/inner/save 三占位页各标承接卡号；走全流程到 save', async () => {
+describe('环节 3/4 实体化（T6-07 StepSchema／T6-08 StepScript＋StepConfig）＋环节 5~6 占位页（随 T6-09）', () => {
+  it('schema=StepSchema、script=两页子 tab（脚本/配置）；inner/save 两占位页各标承接卡号；走全流程到 save', async () => {
     await act(async () => {
       openNodeEditor();
     });
@@ -266,8 +267,17 @@ describe('环节 3 实体化（T6-07 已落 StepSchema）＋环节 4~6 占位页
       expect(useDefinitionDraftStore.getState().step).toBe('schema'); // 门净可跳
       expect(m.container.querySelector('[data-step-form="schema"]')).toBeTruthy(); // 实环节页
       expect(m.container.querySelector('[data-step-placeholder]')).toBe(null); // 占位已由 T6-07 替换
+      await act(async () => {
+        m.container.querySelector<HTMLButtonElement>('[data-step-nav="script"]')?.click();
+      });
+      expect(useDefinitionDraftStore.getState().step).toBe('script');
+      expect(m.container.querySelector('[data-step-form="script"]')).toBeTruthy(); // T6-08 脚本页（默认子页）
+      expect(m.container.querySelector('[data-step-placeholder]')).toBe(null); // 占位已由 T6-08 替换
+      await act(async () => {
+        m.container.querySelector<HTMLButtonElement>('[data-script-page-tab="config"]')?.click();
+      });
+      expect(m.container.querySelector('[data-step-form="config"]')).toBeTruthy(); // config 子页
       const expects: Array<[string, string]> = [
-        ['script', 'T6-08'],
         ['inner', 'T6-09'],
         ['save', 'T6-09'],
       ];

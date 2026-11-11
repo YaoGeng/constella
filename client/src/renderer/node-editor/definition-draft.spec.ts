@@ -315,3 +315,108 @@ describe('N3/N6/N7 草稿读写面（T6-07 StepSchema 消费——draft.paramsSc
     expect(cleared.io).toBe(null);
   });
 });
+
+describe('环节 4 脚本草稿态（T6-08——script.lang/py/ts/configYaml 内存草稿，未保存不落盘）', () => {
+  it('create 初始：lang=python（demo 内置脚本 py 主导基线——设计值）、py/ts/configYaml 空文本、不 dirty', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    const s = useDefinitionDraftStore.getState();
+    expect(s.script).toEqual({ lang: 'python', py: '', ts: '', configYaml: '' });
+    expect(isDirty(s)).toBe(false);
+  });
+
+  it('patchScript 各字段写入＋dirty；py/ts 双文本各自存续（lang 切换零拷贝零丢失）', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    useDefinitionDraftStore.getState().patchScript({ py: 'x = 1' });
+    useDefinitionDraftStore.getState().patchScript({ lang: 'ts' }); // 切 ts——py 文本保留
+    useDefinitionDraftStore.getState().patchScript({ ts: 'const y = 2;' });
+    useDefinitionDraftStore.getState().patchScript({ configYaml: 'node: t\nparams:\n' });
+    const s = useDefinitionDraftStore.getState();
+    expect(s.script).toEqual({ lang: 'ts', py: 'x = 1', ts: 'const y = 2;', configYaml: 'node: t\nparams:\n' });
+    expect(isDirty(s)).toBe(true);
+  });
+
+  it('computeStepErrors 第四参：ts 语法错误 → errors.script、rule=N4-syntax、field=script.code、message 含 L<行号>', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    const draft = useDefinitionDraftStore.getState().draft;
+    const errors = computeStepErrors(draft, undefined, undefined, {
+      lang: 'ts',
+      py: '',
+      ts: 'const a = 1;\nbad(((',
+      configYaml: '',
+    });
+    const hit = errors.script?.filter((e) => e.rule === 'N4-syntax');
+    expect(hit?.length).toBeGreaterThan(0);
+    expect(hit?.every((e) => e.field === 'script.code')).toBe(true);
+    expect(hit?.some((e) => e.message.includes('L2'))).toBe(true); // 第 2 行回指
+  });
+
+  it('py 语法错误（T0-04 同构口径）→ errors.script message=「L1 Syntax error」；合法注入物零 script 错', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    const draft = useDefinitionDraftStore.getState().draft;
+    const bad = computeStepErrors(draft, undefined, undefined, { lang: 'python', py: 'def f(:', ts: '', configYaml: '' });
+    expect(bad.script?.some((e) => e.rule === 'N4-syntax' && e.message === 'L1 Syntax error')).toBe(true);
+
+    const ok = computeStepErrors(draft, undefined, undefined, {
+      lang: 'python',
+      py: 'async def run(ctx):\n    return {"data": ctx.input}\n',
+      ts: '',
+      configYaml: '',
+    });
+    expect(ok.script).toBeUndefined(); // 合法＋空 ts 文本（未选中语言不校验）→ 无 script 错
+  });
+
+  it('门只看当前选中语言（py 错但 lang=ts → 不拦——保存链只打包当前 lang，T6-09 口径）', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    const st = useDefinitionDraftStore.getState();
+    st.patchMeta({ name: '门语言' });
+    st.setType('xhs.lang');
+    useDefinitionDraftStore.getState().patchScript({ lang: 'ts', py: 'def f(:', ts: 'const ok = 1;' });
+    const errors = computeStepErrors(
+      useDefinitionDraftStore.getState().draft,
+      undefined,
+      undefined,
+      useDefinitionDraftStore.getState().script,
+    );
+    expect(errors.script).toBeUndefined(); // py 未选中——其草稿文本暂存不拦门
+  });
+
+  it('语法错误拦 script 环节门：nextStep/goToStep(inner) 被拒；修正后可前进', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    const st = useDefinitionDraftStore.getState();
+    st.patchMeta({ name: '拦门' });
+    st.setType('xhs.gate2');
+    useDefinitionDraftStore.getState().patchScript({ py: 'def f(:' });
+    useDefinitionDraftStore.getState().goToStep('script'); // 前置门净（meta/ports/schema）——可达
+    expect(useDefinitionDraftStore.getState().step).toBe('script');
+    useDefinitionDraftStore.getState().nextStep();
+    expect(useDefinitionDraftStore.getState().step).toBe('script'); // script 门未过——不得前进
+    useDefinitionDraftStore.getState().goToStep('save');
+    expect(useDefinitionDraftStore.getState().step).toBe('script'); // 跳步同受门拦
+
+    useDefinitionDraftStore.getState().patchScript({ py: 'x = 1\n' });
+    useDefinitionDraftStore.getState().nextStep();
+    expect(useDefinitionDraftStore.getState().step).toBe('inner'); // 修正后门过
+  });
+
+  it('config yaml 不入门错误（§6.1e 警告不拦截——键失配仅 UI 呈现）', () => {
+    useDefinitionDraftStore.getState().openNodeEditor();
+    const draft = useDefinitionDraftStore.getState().draft;
+    const errors = computeStepErrors(draft, undefined, undefined, {
+      lang: 'python',
+      py: '',
+      ts: '',
+      configYaml: 'node: x\nparams:\n  ghost: 1\n', // 与 N3 键失配——警告面非门
+    });
+    expect(errors.script).toBeUndefined();
+  });
+
+  it('edit 载入：script 草稿空起（资产文本装载=装配点注入面，随 T6-09 保存链）且不 dirty', () => {
+    useDefinitionDraftStore.getState().openNodeEditor(
+      { type: 'xhs.search' },
+      { getDefinition: () => fullDef() },
+    );
+    const s = useDefinitionDraftStore.getState();
+    expect(s.script).toEqual({ lang: 'python', py: '', ts: '', configYaml: '' });
+    expect(isDirty(s)).toBe(false);
+  });
+});

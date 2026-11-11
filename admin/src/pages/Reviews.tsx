@@ -4,12 +4,14 @@
  * - 行操作「审核」→ navigate('/packages/'+packageId)（路由 path 解耦——不 import A-04 组件，§2）；
  * - 数据层全收在 api/adminReviews.ts（页面禁自起 fetch——A-01 §6.5 边界）；
  * - ⚠ 仅传 status=pending/page（§1 端点表冻结面）；V1 固定 pending（D-7 最小集，§8 扩展①不在本卡）；
+ * - 页码回落（batch-2 登记③ MINOR 随 T6-04 收口）：决策出队后当前页超末页（空 items＋total>0）→
+ *   回落有效末页重取；「已清空」空态仅在真无数据（total=0）时显示；
  * - 从 A-04 返回本页=组件重挂载触发 useQuery 重取（staleTime=0 设计值——adminReviews.ts）；
  * - reviewColumns/QueueEmptyState 内联于本文件（§3 组件行，接口逐字一致；
  *   QueueEmptyState 无 props——手动刷新按钮由本页编排注入查询出口）。
  */
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button, Empty, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useNavigate } from 'react-router'
@@ -121,7 +123,16 @@ export default function ReviewsPage(): ReactNode {
   // refetch 别名 reload：pages/components 禁自起请求字面（A-01 §6.5 静态检查按「fetch＋左括号」
   // 子串匹配，原方法名调用会误中）——仅命名规避，语义不变（Users.tsx 同款）
   const { data, isPending, isFetching, error, refetch: reload } = useReviewQueueQuery(page)
-  const queueEmpty = data !== undefined && data.items.length === 0
+  // 空态仅在真无数据（total=0）时显示——items 空但 total>0＝当前页超末页（数据页非空集），走下方回落
+  const queueEmpty = data !== undefined && data.items.length === 0 && data.total === 0
+
+  // 页码回落（batch-2 登记③ MINOR 随 T6-04 收口）：审核决策出队后队列清短，停留页码超出末页时
+  // 数据页返回空 items＋total>0 → 回落有效末页重取（页大小跟随 server 默认 20——分页列同款假设）
+  useEffect(() => {
+    if (data !== undefined && data.items.length === 0 && data.total > 0 && page > 1) {
+      setPage(Math.max(1, Math.ceil(data.total / 20)))
+    }
+  }, [data, page])
 
   return (
     <div>

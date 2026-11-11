@@ -1,0 +1,35 @@
+# 根构建上下文忽略表（T6-14；PM 授权领地扩展 2026-11-11）
+# 作用：Docker 构建上下文=仓库根（server/Dockerfile 的 pnpm workspace 构建需要根 lockfile+shared），
+#   本表防上下文膨胀与密钥泄漏（.env* 必列——契约#2 密钥不进镜像）。
+# 构建 COPY 面=根 package.json/pnpm-lock.yaml/pnpm-workspace.yaml + shared/ + server/（Dockerfile 逐条 COPY）。
+
+# —— 密钥（契约#2：.env* 一律不进构建上下文）——
+**/.env
+**/.env.*
+
+# —— 版本库与 CI ——
+.git
+.github
+
+# —— 依赖与产物（builder 内自装/自生成：pnpm install + prisma generate，不依赖仓库产物）——
+**/node_modules
+**/dist
+**/generated
+
+# —— 构建无关的 workspace 成员与目录（COPY 面只有 shared/+server/）——
+client
+admin
+sdk
+scripts
+spikes
+prototypes
+docs
+
+# —— 运行时数据与本地等价验证残留（T6-14 等价链产物：部署树/运行件树，勿入镜像）——
+**/storage
+**/storage-*
+server/.deploy-eq
+server/.run-tools-eq
+
+# —— 杂项 ——
+*.log
