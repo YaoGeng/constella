@@ -4,7 +4,7 @@
  * 复用处：A-02~05 全部页面。本组件不发起任何请求——数据出口一律经 api/client。
  */
 import type { ReactNode } from 'react'
-import { Alert, Button, Empty, Spin } from 'antd'
+import { Alert, Button, Empty, Flex, Spin } from 'antd'
 import { ApiError } from '../api/client'
 
 export interface PageStateProps {
@@ -48,9 +48,9 @@ export function PageState({ loading = false, error, empty = false, onRetry, chil
   }
   if (loading) {
     return (
-      <div style={{ padding: 48, textAlign: 'center' }}>
+      <Flex align="center" justify="center" style={{ padding: 48 }}>
         <Spin />
-      </div>
+      </Flex>
     )
   }
   if (empty) {

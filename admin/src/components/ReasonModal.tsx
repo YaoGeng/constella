@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { Input, Modal } from 'antd'
+import { Input, Modal, Space, Typography } from 'antd'
 
 export interface ReasonModalProps {
   open: boolean
@@ -57,16 +57,18 @@ export function ReasonModal({ open, title, onSubmit, onCancel, confirmLoading, m
       onCancel={onCancel}
       destroyOnHidden
     >
-      <Input.TextArea
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        status={error ? 'error' : undefined}
-        rows={4}
-        placeholder="请输入理由（必填，将随操作留痕）"
-        maxLength={maxLength}
-        showCount={maxLength !== undefined}
-      />
-      {error ? <div style={{ color: '#ff4d4f', marginTop: 4 }}>{error}</div> : null}
+      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+        <Input.TextArea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          status={error ? 'error' : undefined}
+          rows={4}
+          placeholder="请输入理由（必填，将随操作留痕）"
+          maxLength={maxLength}
+          showCount={maxLength !== undefined}
+        />
+        {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
+      </Space>
     </Modal>
   )
 }

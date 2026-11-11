@@ -12,7 +12,7 @@
  */
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { Button, Empty, Table, Tag, Typography } from 'antd'
+import { Button, Empty, Flex, Table, Tag, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { useNavigate } from 'react-router'
 import type { ReviewQueueItem } from '@constella/shared/dto'
@@ -137,23 +137,21 @@ export default function ReviewsPage(): ReactNode {
   return (
     <div>
       <Typography.Title level={5}>审核队列</Typography.Title>
-      <div style={{ marginBottom: 16 }}>
+      <Flex style={{ marginBottom: 16 }}>
         {data ? (
           <Typography.Text type="secondary" data-testid="reviews-total">
             待审 {data.total} 个包
           </Typography.Text>
         ) : null}
-      </div>
+      </Flex>
       <PageState loading={isPending} error={error} onRetry={() => void reload()}>
         {queueEmpty ? (
-          <div style={{ padding: 48, textAlign: 'center' }}>
+          <Flex vertical align="center" gap={16} style={{ padding: 48 }}>
             <QueueEmptyState />
-            <div>
-              <Button style={{ marginTop: 16 }} loading={isFetching} onClick={() => void reload()}>
-                手动刷新
-              </Button>
-            </div>
-          </div>
+            <Button loading={isFetching} onClick={() => void reload()}>
+              手动刷新
+            </Button>
+          </Flex>
         ) : (
           <Table<ReviewQueueItem>
             rowKey="packageId"

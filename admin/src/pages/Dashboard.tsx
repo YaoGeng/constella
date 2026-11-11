@@ -8,7 +8,7 @@
  * - StatCard/TrendChart 内联于本文件（§3 组件行接口逐字一致；单页复用无跨页引用——Reviews 页同款先例）。
  */
 import type { ReactNode } from 'react'
-import { Button, Card, Col, Row, Statistic, Typography } from 'antd'
+import { Button, Card, Col, Flex, Row, Statistic, Typography } from 'antd'
 import { useNavigate } from 'react-router'
 import type { StatsOverview } from '@constella/shared/dto'
 import { useStatsOverviewQuery } from '../api/adminStats'
@@ -148,14 +148,14 @@ export default function DashboardPage(): ReactNode {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+      <Flex align="center" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={5} style={{ margin: 0 }}>
           运营看板
         </Typography.Title>
         <Button loading={isFetching} onClick={() => void reload()} data-testid="dashboard-refresh">
           刷新
         </Button>
-      </div>
+      </Flex>
       <PageState loading={isPending} error={error} onRetry={() => void reload()}>
         {data ? (
           <>

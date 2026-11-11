@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react'
 import { useState } from 'react'
-import { Alert, Button, Card, Form, Input, Typography } from 'antd'
+import { Alert, Button, Card, Flex, Form, Input, Typography } from 'antd'
 import { useNavigate } from 'react-router'
 import { ApiError } from '../api/client'
 import { authSession, NonAdminError } from '../session/authSession'
@@ -54,15 +54,7 @@ export default function LoginPage(): ReactNode {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#f5f5f5',
-      }}
-    >
+    <Flex align="center" justify="center" style={{ minHeight: '100vh', background: '#f5f5f5' }}>
       <Card style={{ width: 380 }}>
         <Typography.Title level={4} style={{ textAlign: 'center', marginBottom: 24 }}>
           Constella Admin
@@ -95,6 +87,6 @@ export default function LoginPage(): ReactNode {
           </Form.Item>
         </Form>
       </Card>
-    </div>
+    </Flex>
   )
 }

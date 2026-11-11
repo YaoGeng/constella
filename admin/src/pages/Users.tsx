@@ -8,7 +8,7 @@
  */
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { Input, Spin, Table, Typography } from 'antd'
+import { Flex, Input, Spin, Table, Typography } from 'antd'
 import type { AdminUserRow } from '@constella/shared/dto'
 import { useBanMutation, useUnbanMutation, useUsersQuery } from '../api/adminUsers'
 import { PageState } from '../components/PageState'
@@ -59,7 +59,7 @@ export default function UsersPage(): ReactNode {
   return (
     <div>
       <Typography.Title level={5}>用户管理</Typography.Title>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+      <Flex align="center" gap={12} style={{ marginBottom: 16 }}>
         <Input
           allowClear
           data-testid="users-search"
@@ -74,7 +74,7 @@ export default function UsersPage(): ReactNode {
             共 {data.total} 个用户
           </Typography.Text>
         ) : null}
-      </div>
+      </Flex>
       <PageState loading={isPending} error={error} onRetry={() => void reload()}>
         <Table<AdminUserRow>
           rowKey="id"
