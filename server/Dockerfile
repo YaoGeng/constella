@@ -41,8 +41,13 @@ RUN pnpm --filter ./server... deploy --prod /deploy \
 FROM node:24.6-alpine AS runner
 ARG VERSION
 WORKDIR /app
+# NODE_PATH＝run-tools 回退解析位（2026-11-12 上线实测修复）：entrypoint 的 migrate 会以 CJS 加载
+# /app/prisma.config.ts，其 require('prisma/config') 在 --prod 部署树内无 prisma（devDep）——本地等价
+# 因 .deploy-eq 嵌套于 server/ 内向上解析命中 devDep 而意外通过，容器 /app 无父级可走即断。
+# NODE_PATH=CJS 回退链（树内 node_modules 优先，仅缺口回落 run-tools），应用自身依赖解析不受影响。
 ENV NODE_ENV=production \
     APP_ENV=prod \
+    NODE_PATH=/opt/run-tools/node_modules \
     # 运行件 bin（prisma CLI）入 PATH——entrypoint 直调（npx 在离线容器可能触发网络安装，弃用）
     PATH="/opt/run-tools/node_modules/.bin:${PATH}"
 # §6.1：生产镜像使用明确版本标签、禁 latest；版本随 docker inspect 可核
