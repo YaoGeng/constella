@@ -4,12 +4,14 @@
 //
 //   编排：环节导航（回退自由/前进受门）/当前环节表单（环节 1=StepMeta、2=StepPorts、
 // 3=StepSchema〔T6-07〕、4=StepScript＋StepConfig 两页子 tab〔T6-08——01 §5.3 PATH1 环节
-// 4/5 两页合一环节〕、5~6=StepPlaceholder 随 T6-09 替换）/实时校验回显
-// （computeStepErrors——validateDefinition 单一来源投影＋环节 4 语法门，错误定位到环节+字段）/
-// 上一步-下一步（未过门 next 禁用并标 data-gate-blocked）。
+// 4/5 两页合一环节〕、5=StepInner〔T6-09——N5 步骤列表〕、6=StepSave〔T6-09——N8＋完整性
+// 汇总＋保存链触发〕）/实时校验回显（computeStepErrors——validateDefinition 单一来源投影
+// ＋环节 4 语法门，错误定位到环节+字段）/上一步-下一步（未过门 next 禁用并标 data-gate-blocked）。
 //   预览：环节 1/2 右侧 NodeCardPreview（§3 复用处）——端口布局/✨/参数预览实时反映；
 // 环节 3 右侧 ParamFormPreview（§3 复用处=StepSchema——C-02 ParamFormRenderer 同源渲染，X-8）。
-//   dirty 位：未保存标「未保存」（草稿内存态——未保存不落盘，保存动作随 T6-09 StepSave）。
+//   dirty 位：未保存标「未保存」（草稿内存态）；保存成功 markSaved 复位（T6-09 StepSave）。
+//   保存链（T6-09）：经入口 deps.savePipeline 注入（P-3——生产接线随 T6-16 应用壳；未注入=
+// 保存钮未装配态）；assets 适配=assetsFromScriptDraft（M5 只打包当前 lang）。
 import { useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
 import type { EditorStepKey } from './definition-draft';
@@ -22,10 +24,12 @@ import {
 } from './definition-draft';
 import { NodeCardPreview } from './node-card-preview';
 import { ParamFormPreview } from './param-form-preview';
+import { assetsFromScriptDraft } from './save-pipeline';
 import { StepConfig } from './step-config';
+import { StepInner } from './step-inner';
 import { StepMeta } from './step-meta';
-import { StepPlaceholder } from './step-placeholder';
 import { StepPorts } from './step-ports';
+import { StepSave } from './step-save';
 import { StepSchema } from './step-schema';
 import { StepScript } from './step-script';
 
@@ -57,10 +61,17 @@ export function EditorShell() {
   const seedError = useDefinitionDraftStore((s) => s.seedError);
   const deps = useDefinitionDraftStore((s) => s.deps);
   const dirty = useDefinitionDraftStore(isDirty);
-  const { goToStep, nextStep, prevStep, patchMeta, setType, setPorts, setParamsSchema, setPolicy, setIo, patchScript, closeEditor } =
+  const { goToStep, nextStep, prevStep, patchMeta, setType, setPorts, setParamsSchema, setPolicy, setIo, patchScript, setInner, setVersion, setPackageVersion, markSaved, closeEditor } =
     useDefinitionDraftStore.getState();
   /** 环节 4 两页子 tab（01 §5.3 PATH1 环节 4/5=脚本/config 两页合一环节——UI 临时态不入 store） */
   const [scriptPage, setScriptPage] = useState<'script' | 'config'>('script');
+  /** 保存结果 UI 态（T6-09——不入 store：saving/saved/rejected/error 四面） */
+  const [saveUi, setSaveUi] = useState<{ saving: boolean; saved: boolean; rejected: boolean; error: string | null }>({
+    saving: false,
+    saved: false,
+    rejected: false,
+    error: null,
+  });
 
   const errors = useMemo(
     () => computeStepErrors(draft, deps ?? undefined, mode === 'edit' ? draft.type : undefined, script),
@@ -72,6 +83,33 @@ export function EditorShell() {
   const currentErrors = errors[step] ?? [];
   const gateBlocked = currentErrors.length > 0;
   const isLast = step === 'save';
+
+  /** 保存动作（T6-09）：保存链触发＋结果呈现（成功→markSaved 复位 dirty；被拒→留在本页显示
+   *  「保存被拒」＋汇总「!」环节定位〔用户点「去修正」跳转——不自动切页抢焦点〕；异常→错误面）
+   *  ——assets 适配只打包当前 lang（M5）。 */
+  const doSave = (): void => {
+    const pipeline = deps?.savePipeline;
+    if (pipeline === undefined || saveUi.saving) return;
+    setSaveUi({ saving: true, saved: false, rejected: false, error: null });
+    void pipeline
+      .saveToLibrary(draft, assetsFromScriptDraft(draft.type, script))
+      .then((report) => {
+        if (report.ok) {
+          markSaved();
+          setSaveUi({ saving: false, saved: true, rejected: false, error: null });
+          return;
+        }
+        setSaveUi({ saving: false, saved: false, rejected: true, error: null }); // 留页呈现（汇总同步反映错误环节）
+      })
+      .catch((err: unknown) => {
+        setSaveUi({
+          saving: false,
+          saved: false,
+          rejected: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  };
 
   return (
     <div
@@ -208,8 +246,22 @@ export function EditorShell() {
                     )}
                   </div>
                 )}
-                {(step === 'inner' || step === 'save') && (
-                  <StepPlaceholder step={step} />
+                {step === 'inner' && <StepInner inner={draft.inner ?? null} onChange={setInner} />}
+                {step === 'save' && (
+                  <StepSave
+                    version={draft.version}
+                    packageVersion={draft.packageVersion}
+                    errors={errors}
+                    canSave={deps?.savePipeline !== undefined}
+                    saving={saveUi.saving}
+                    rejected={saveUi.rejected}
+                    saveError={saveUi.error}
+                    saved={saveUi.saved}
+                    onVersionChange={setVersion}
+                    onPackageVersionChange={setPackageVersion}
+                    onSave={doSave}
+                    onGoStep={goToStep}
+                  />
                 )}
               </div>
               {(step === 'meta' || step === 'ports') && (
@@ -261,7 +313,7 @@ export function EditorShell() {
                 data-testid="ne-next"
                 disabled={isLast || gateBlocked}
                 data-gate-blocked={gateBlocked ? step : undefined}
-                title={isLast ? '保存链随 T6-09 StepSave 落位' : gateBlocked ? '本环节校验未过——不得前进' : undefined}
+                title={isLast ? '末环节——保存入库见本环节表单' : gateBlocked ? '本环节校验未过——不得前进' : undefined}
                 onClick={nextStep}
                 className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink-on-accent)] disabled:opacity-50"
               >

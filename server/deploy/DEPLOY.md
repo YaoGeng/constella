@@ -3,6 +3,7 @@
 > 交付：T6-14（TDD-S-01 §3 DeployArtifacts 生产化）。依据＝《服务器部署标准》V1.5（仓库外文档，03 §7.5 登记）§5.3/§5.5/§6/§7/§8/§10。
 > 目标：aimServer `43.160.219.44`（Ubuntu 24.04，日常账号 deploy，NOPASSWD sudo）；产品目录 `/opt/aim/constella`；端口 `8051`（§2.3「8051 起按 10 递增」首位）；域名 `constella.aim8848.com`（灰云直连）。
 > 工件清单：`server/Dockerfile`（pnpm workspace 两段构建＋tsx 源码承载＋版本标签）、根 `.dockerignore`（上下文根防膨胀/密钥隔离）、`server/compose.yml`（生产版，build.context=仓库根）、`server/docker-entrypoint.sh`（迁移后启动）、`server/deploy/nginx/constella.aim8848.com.conf`（反代）、`server/deploy/env.example`（.env 模板）、本手册。
+> T6-15 增补（A-01 admin 静态托管＋Basic Auth——部署标准 §5.3/§5.4/§6.3/§8 步 4·7）：conf `/admin` 段补真（占位注释撤）、步 4 收尾（zone=admin 检查＋htpasswd SOP＋401 验证）、步 7 全文（构建/同步/`admin_bak` 秒级回退/三态终验）、回滚流程②落形。
 > 工件运行序（部署树内 migrate deploy → `node --import tsx src/index.ts` 启动 → AdminSeed 幂等首建 → healthz）已在本仓库以**与容器 CMD 同形**的部署树本地等价验证（`pnpm deploy --prod` 产出树实测：healthz/login/幂等全绿——记录见 T6-14 交付报告）；本手册为生产端 SOP。
 
 ---
@@ -88,7 +89,30 @@ curl -s --resolve constella.aim8848.com:443:127.0.0.1 https://constella.aim8848.
 ```
 
 完成标准：`nginx -t` 通过、reload 生效、回源返回 `{"status":"ok"}`。
-**/admin 后台段归 T6-15（A-01）交付**——本卡 conf 中仅占位注释；T6-15 上线时补 `location /admin`（静态托管＋auth_basic＋limit_req zone=admin），**其启用 Basic Auth 前后台不得对外开放**（§5.4）。
+
+**/admin 后台段已入 conf（T6-15 · A-01 交付）**——`location /admin` 四件套：静态托管 `www/admin/`＋`auth_basic`＋`limit_req zone=admin`＋`try_files` SPA 回退（§5.3 模板逐指令照抄）。conf 引用 zone=admin，`nginx -t` 在 zone 缺失时会直接报错（`unknown limit_req zone "admin"`）——主块校验前先核 zone；随 reload 一并收尾三件：
+
+```bash
+# ① zone=admin 存在性检查（§5.7：定义于 infra 00-hardening.conf，与 zone=api 同机制——
+#    limit_req_zone $binary_remote_addr zone=admin:10m rate=1r/s;）。
+#    缺失则在该 conf 补上述一行（服务器侧动作），随后重跑主块 nginx -t → reload。
+grep -n 'zone=admin' /opt/aim/infra/nginx/conf.d/00-hardening.conf
+
+# ② htpasswd 生成（§5.4 后台强制——「未启用 Basic Auth 的后台不得对外开放」；命令=§5.4 原文）。
+#    Basic 口令独立于 .env 的 ADMIN_PASSWORD（双防线：Basic 门=运维层、应用 JWT=应用层，
+#    §5.4「同时保留应用自身的强密码…作为第二道防线」——静态后台页面与 /api/ 异路径，无头冲突，§5.3 注）。
+htpasswd -bc /opt/aim/infra/nginx/conf.d/admin.htpasswd <用户名> '<强密码>'
+#    ※ admin.htpasswd 为全产品共用单文件（§5.4 单一路径式，各产品 conf 同引 /etc/nginx/conf.d/admin.htpasswd）：
+#      文件已存在时改 `htpasswd -b`（追加用户/改密），勿 -c 覆盖他产品条目。
+#    ※ 凭据经密码管理器传递——§6.4 红线原文「凭据不进入 git、不写入日志、不通过聊天工具传输」，
+#      并汇总至 /opt/aim/infra/CREDENTIALS.md（600）。文件随 conf.d 只读挂载进 aim-nginx，生成即生效无需重启。
+#    ※ 可选（有固定出口 IP 时，§5.4）：conf 的 /admin 段内追加 `allow <出口IP>; deny all;` 白名单。
+
+# ③ Basic 门验证（主块 reload 之后；401=无凭据即拒=门已生效——步 7 前唯一可验态）
+curl -s -o /dev/null -w "%{http_code}" https://constella.aim8848.com/admin/    # 期望 401（无凭据）
+curl -s -o /dev/null -w "%{http_code}" -u '<用户名>:<强密码>' https://constella.aim8848.com/admin/
+# 凭据正确时：步 7 前期望 404（www/admin/ 尚未同步、try_files 落空）；步 7 同步后=200——终验三态见步 7③
+```
 
 ### 步 5 · aim-pg 建库建账号（§8-5 / §7.1 SOP）
 
@@ -123,9 +147,42 @@ curl -s -X POST http://127.0.0.1:8051/api/auth/login -H 'content-type: applicati
 
 完成标准：登录 200 且返回 accessToken；管理凭据记入 CREDENTIALS.md（600）。
 
-### 步 7 · 前端构建产物同步 www（§8-7）—— 归 T6-15
+### 步 7 · admin 构建产物同步 www（§8-7 / §6.3；T6-15 · A-01 交付）
 
-admin 静态托管（`vite build → rsync /opt/aim/constella/www/admin/`＋Basic Auth 收尾）为 T6-15（A-01）交付内容，本卡不执行；constella V1 无用户端 Web（client=桌面端 Tauri），`location /` 保持 404。
+constella V1 无用户端 Web（client=桌面端 Tauri 应用），`location /` 保持 404；本步对象=**admin 静态后台**——开发机构建 → scp 同步至 `/opt/aim/constella/www/admin/`（§6.3「CI 构建产物通过 rsync/scp 同步至 www/」；本开发机 Git Bash 无 rsync，取 scp 形——仓库外 `aim/deploy.sh` scp 先例）→ 步 4 Basic 门后三态终验。发布保留上一版本为 `admin_bak`（§6.3「保留上一版本为 `www_bak`，用于秒级回退」的 admin 形态），异常换回即回滚（§6.6②）。
+
+**① 构建（开发机，仓库根执行）**：
+
+```bash
+pnpm -F ./admin run build        # vite build → admin/dist（base='/admin/'＝A-01 §4 设计值，vite.config.ts 已冻结）
+grep -o '/admin/assets/[^" ]*' admin/dist/index.html | sort -u    # base 落位核对：资源引用前缀须全为 /admin/
+```
+
+**② 同步（Windows Git Bash → deploy@43.160.219.44；先备份后同步，防半传状态对外可见）**：
+
+```bash
+# 备份上一版本（服务器侧；admin_bak=秒级回退点——§6.3。首发布无 admin 目录时提示无害）
+ssh deploy@43.160.219.44 'mkdir -p /opt/aim/constella/www && rm -rf /opt/aim/constella/www/admin_bak; mv /opt/aim/constella/www/admin /opt/aim/constella/www/admin_bak 2>/dev/null || echo "(首发布：无旧版可备份)"'
+# 上传（先落临时名）
+scp -r admin/dist deploy@43.160.219.44:/opt/aim/constella/www/_admin_incoming
+# 原子换名落位（同分区 mv 秒级完成；服务器不做构建，只接收静态产物——§6.5）
+ssh deploy@43.160.219.44 'mv /opt/aim/constella/www/_admin_incoming /opt/aim/constella/www/admin'
+```
+
+**③ 三态终验（凭据=步 4② htpasswd；SPA 回退=深链刷新仍 200——§6.3「SPA 应用必须配置 `try_files ... /index.html` 回退」）**：
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" https://constella.aim8848.com/admin/                                # 期望 401（无凭据）
+curl -s -o /dev/null -w "%{http_code}" -u '<用户名>:<强密码>' https://constella.aim8848.com/admin/        # 期望 200
+curl -s -o /dev/null -w "%{http_code}" -u '<用户名>:<强密码>' https://constella.aim8848.com/admin/users   # 期望 200（SPA 回退）
+```
+
+**④ 发布异常秒级回退（§6.6②「前端异常：将 `www_bak` 换回 `www`」——admin 形态=`admin_bak` 换回 `admin`）**：
+
+```bash
+ssh deploy@43.160.219.44 'rm -rf /opt/aim/constella/www/admin && mv /opt/aim/constella/www/admin_bak /opt/aim/constella/www/admin'
+# 回退后以 ③ 复验三态；故障现象/回滚时间/原因按 §6.6#4 登记
+```
 
 ### 步 8 · UptimeRobot 拨测（§8-8）
 
@@ -162,7 +219,7 @@ sudo /opt/aim/scripts/backup.sh                                     # 手动触�
 ## 回滚流程（§6.6）
 
 1. 镜像回退：`.env` 中 `CONSTELLA_VERSION` 改回上一可用版本 → `docker compose up -d`（标签回退即回滚，禁 latest 的原因之一）；
-2. 前端异常：`www_bak` 换回 `www`（归 T6-15 形态）；
+2. 前端异常：`www_bak` 换回 `www`——constella admin 形态=`admin_bak` 换回 `admin`（命令见步 7④）；
 3. **数据不回滚**：结构变更遵循 expand–contract，数据修复走补偿脚本（§7.4）；
 4. 记录故障现象、回滚时间与原因。
 

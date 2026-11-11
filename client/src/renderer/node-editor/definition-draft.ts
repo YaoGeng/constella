@@ -3,7 +3,8 @@
 //
 //   内存草稿红线（§3「模块内草稿 store（内存；未保存不落盘、不入 02 §3.3 六 store）」）：
 // 零 persist 中间件、零 zundo temporal、零 storage/IPC import——close 即弃，保存链（SavePipeline）
-// 随 T6-09 落位。draft 读写＋dirty 位（§3 组件级接口）＝本 store 全部职责。
+// 随 T6-09 已落位（./save-pipeline——入口 deps.savePipeline 注入）。draft 读写＋dirty 位（§3 组件级
+// 接口）＝本 store 全部职责。
 //
 //   实时校验＝T4-07 validateDefinition 单一来源（C-02 §3；03 C-13 §2 imports ↓ 点名——
 // 不自造规则）：环节门（gate）只看「规则→环节」投影 computeStepErrors；唯二例外=PATH1
@@ -18,7 +19,7 @@
 // ——02 §8.2 upsert 四入口之手动编辑器）；改写不计 dirty（dirty=用户改动，基线=载入态）。
 //
 //   环节 4 脚本草稿（T6-08）：script.lang/py/ts/configYaml 内存草稿（未保存不落盘——保存链
-// 随 T6-09 SavePipeline；edit 态资产文本装载=装配点注入面，create/edit 同空起）。lang 值域
+// 随 T6-09 SavePipeline 已落位；edit 态资产文本装载=装配点注入面（renderer 无 fs 通道读 node-types——V2/装配位登记），create/edit 同空起）。lang 值域
 // 对齐 DSL ExecSpec.lang 'python'|'ts'（UI 显示 py|ts——「py|ts 切换」字面的等价确定形，
 // 免草稿→exec 落库二次转换）；py/ts 双文本各自存续=「切换保留各自文本」语义（零拷贝零丢失）。
 // 环节门增 N4-syntax（PATH1 语法校验门第三条——01 §5.3 环节 4「语法校验保存门」/03 C-13
@@ -26,9 +27,10 @@
 // 拦门（未选中语言草稿暂存不拦——保存链只打包当前 lang，T6-09 口径）；config 键失配
 // =§6.1e 警告不拦截（ConfigYamlEditor UI 面，不入 computeStepErrors）。
 import { create } from 'zustand';
-import type { IoContract, NodeDefinition, NodeMeta, NodePorts, ParamField, RunPolicy } from '@constella/shared/dsl';
+import type { InnerStep, IoContract, NodeDefinition, NodeMeta, NodePorts, ParamField, RunPolicy } from '@constella/shared/dsl';
 import { validateDefinition } from '../definition';
 import type { DefRule, FieldError } from '../definition';
+import type { NodeEditorSavePipeline } from './save-pipeline';
 import { check } from './syntax-checker';
 import type { ScriptLang } from './syntax-checker';
 
@@ -98,6 +100,8 @@ export interface EditorEntryDeps {
   getDefinition?(type: string): NodeDefinition | undefined;
   /** 命名空间动态查（C-05 hasType 注入——自身同型排除在 computeStepErrors 内统一做，A-11.1） */
   hasType?(t: string): boolean;
+  /** 保存链（T6-09 SavePipeline 实例——StepSave 保存动作消费；未注入=保存钮未装配态，生产接线随 T6-16） */
+  savePipeline?: NodeEditorSavePipeline;
 }
 
 /** create 态初始草稿（N1~N8 最小合法骨架：outs≥1 合规、version 首发默认 1.0.0——D-11） */
@@ -227,6 +231,13 @@ export interface DefinitionDraftState {
   setIo(io: IoContract | null): void;
   /** 环节 4 脚本草稿读写面（T6-08 StepScript/StepConfig——patchScript 形对齐 patchMeta） */
   patchScript(patch: Partial<ScriptDraft>): void;
+  /** 环节 5 读写面（T6-09 StepInner——N5 inner 步骤；null=非组合节点未声明） */
+  setInner(inner: readonly InnerStep[] | null): void;
+  /** 环节 6 读写面（T6-09 StepSave——N8 version/packageVersion） */
+  setVersion(version: string): void;
+  setPackageVersion(packageVersion: string): void;
+  /** 保存成功后 dirty 复位（T6-09——baseline 快照推进到已保存态，flowStore.markSaved 同语义） */
+  markSaved(): void;
   /** 环节跳转（回退自由；前进=逐门校验，未过门不得前进） */
   goToStep(target: EditorStepKey): void;
   nextStep(): void;
@@ -288,7 +299,7 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
       return;
     }
     const draft = normalizeForEditor(existing); // edit：既有 custom 再编辑（§1）
-    const script = defaultScriptDraft(); // 资产文本装载=装配点注入面（T6-09 保存链接线前空起）
+    const script = defaultScriptDraft(); // 资产文本装载=装配点注入面（T6-09 登记：renderer 无 fs 通道读 node-types，V2/装配位）
     set({ open: true, mode: 'edit', seedError: null, draft, baseline: clone(draft), script, scriptBaseline: clone(script), step: 'meta', deps: deps ?? null });
   },
 
@@ -328,6 +339,26 @@ export const useDefinitionDraftStore = create<DefinitionDraftState>((set, get) =
   patchScript: (patch) => {
     const s = get();
     set({ script: { ...s.script, ...patch } }); // 环节 4 草稿（内存——lang 切换=只改 lang 键，py/ts 文本各自存续）
+  },
+
+  setInner: (inner) => {
+    const s = get();
+    set({ draft: { ...s.draft, inner } }); // 环节 5：null=非组合节点（八条规则无 N5 条——门天然不拦）
+  },
+
+  setVersion: (version) => {
+    const s = get();
+    set({ draft: { ...s.draft, version } });
+  },
+
+  setPackageVersion: (packageVersion) => {
+    const s = get();
+    set({ draft: { ...s.draft, packageVersion } });
+  },
+
+  markSaved: () => {
+    const s = get();
+    set({ baseline: clone(s.draft), scriptBaseline: clone(s.script) }); // dirty 复位（保存态=新底数）
   },
 
   goToStep: (target) => {

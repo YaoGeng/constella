@@ -8,7 +8,8 @@
 // 断言面：stepper 六环节往返＋环节门（未过门 next 禁用/跳步被拒）＋StepMeta N1 全字段
 // （source 固定 manual）＋StepPorts 增删/出口命名＋NodeCardPreview 实时反映（端口布局/
 // ✨/参数预览——demo L1360-1387 锚）＋环节 3/4 实体化（T6-07 StepSchema／T6-08 StepScript
-// ＋StepConfig 两页）＋环节 5~6 占位页（随 T6-09）＋create/edit 路由 UI。
+// ＋StepConfig 两页）＋环节 5/6 实体化（T6-09 StepInner/StepSave——占位组件已撤除）＋
+// create/edit 路由 UI。
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, beforeEach } from 'vitest';
@@ -250,8 +251,8 @@ describe('环节 2 StepPorts（ins/outs 增删＋出口命名＋卡片预览实�
   });
 });
 
-describe('环节 3/4 实体化（T6-07 StepSchema／T6-08 StepScript＋StepConfig）＋环节 5~6 占位页（随 T6-09）', () => {
-  it('schema=StepSchema、script=两页子 tab（脚本/配置）；inner/save 两占位页各标承接卡号；走全流程到 save', async () => {
+describe('环节 3/4 实体化（T6-07 StepSchema／T6-08 StepScript＋StepConfig）＋环节 5/6 实体化（T6-09 StepInner/StepSave）', () => {
+  it('schema=StepSchema、script=两页子 tab（脚本/配置）；inner=StepInner、save=StepSave（T6-09 替换占位）；走全流程到 save', async () => {
     await act(async () => {
       openNodeEditor();
     });
@@ -266,30 +267,27 @@ describe('环节 3/4 实体化（T6-07 StepSchema／T6-08 StepScript＋StepConfi
       });
       expect(useDefinitionDraftStore.getState().step).toBe('schema'); // 门净可跳
       expect(m.container.querySelector('[data-step-form="schema"]')).toBeTruthy(); // 实环节页
-      expect(m.container.querySelector('[data-step-placeholder]')).toBe(null); // 占位已由 T6-07 替换
+      expect(m.container.querySelector('[data-step-placeholder]')).toBe(null); // 占位组件已撤除（T6-09）
       await act(async () => {
         m.container.querySelector<HTMLButtonElement>('[data-step-nav="script"]')?.click();
       });
       expect(useDefinitionDraftStore.getState().step).toBe('script');
       expect(m.container.querySelector('[data-step-form="script"]')).toBeTruthy(); // T6-08 脚本页（默认子页）
-      expect(m.container.querySelector('[data-step-placeholder]')).toBe(null); // 占位已由 T6-08 替换
       await act(async () => {
         m.container.querySelector<HTMLButtonElement>('[data-script-page-tab="config"]')?.click();
       });
       expect(m.container.querySelector('[data-step-form="config"]')).toBeTruthy(); // config 子页
-      const expects: Array<[string, string]> = [
-        ['inner', 'T6-09'],
-        ['save', 'T6-09'],
-      ];
-      for (const [step, card] of expects) {
-        await act(async () => {
-          m.container.querySelector<HTMLButtonElement>(`[data-step-nav="${step}"]`)?.click();
-        });
-        expect(useDefinitionDraftStore.getState().step).toBe(step);
-        const ph = m.container.querySelector('[data-step-placeholder]');
-        expect(ph?.getAttribute('data-step')).toBe(step);
-        expect(ph?.textContent).toContain(card);
-      }
+      await act(async () => {
+        m.container.querySelector<HTMLButtonElement>('[data-step-nav="inner"]')?.click();
+      });
+      expect(useDefinitionDraftStore.getState().step).toBe('inner');
+      expect(m.container.querySelector('[data-step-form="inner"]')).toBeTruthy(); // T6-09 实环节页（非组合空态）
+      expect(m.container.querySelector('[data-step-placeholder]')).toBe(null);
+      await act(async () => {
+        m.container.querySelector<HTMLButtonElement>('[data-step-nav="save"]')?.click();
+      });
+      expect(useDefinitionDraftStore.getState().step).toBe('save');
+      expect(m.container.querySelector('[data-step-form="save"]')).toBeTruthy(); // T6-09 实环节页（N8＋汇总＋保存）
       expect(m.container.querySelector('[data-testid="node-editor-shell"]')?.getAttribute('data-step')).toBe('save');
     } finally {
       await unmount(m);

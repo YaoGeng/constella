@@ -1,7 +1,8 @@
 // node-editor 半段导出面（C-13；T6-06 交付=骨架四组件＋草稿 store——EditorShell/DefinitionDraft/
 // StepMeta/StepPorts/NodeCardPreview；T6-07 交付=环节 3——StepSchema/ParamFormPreview；
 // T6-08 交付=环节 4 两页——StepScript/StepConfig＋ContractInjector/SyntaxChecker/
-// ConfigYamlEditor 纯函数层＋脚本草稿态；环节 5~6 实体随 T6-09 进入）。
+// ConfigYamlEditor 纯函数层＋脚本草稿态；T6-09 交付=环节 5/6——StepInner/StepSave＋
+// SavePipeline 保存链＋assetsFromScriptDraft 适配（占位组件撤除））。
 //   消费方向（03 §2 ↑被依赖）：DrawerShell「✨自定义·手动定义」分支（C-01 编排接入——
 // openNodeEditor＋EditorShell 宿主）；节点库「＋节点」入口（应用壳 T6-17）。
 //   P-3：本模块禁止 import canvas/workshop/sky/run（§6.4 grep 验收）；被 C-01 drawer 调用=合法方向。
@@ -28,18 +29,34 @@ export { NodeCardPreview } from './node-card-preview';
 export type { NodeCardPreviewProps } from './node-card-preview';
 export { ParamFormPreview } from './param-form-preview';
 export type { ParamFormPreviewProps } from './param-form-preview';
+export { StepInner } from './step-inner';
+export type { StepInnerProps } from './step-inner';
+export { StepSave } from './step-save';
+export type { StepSaveProps } from './step-save';
 export { StepMeta } from './step-meta';
 export type { StepMetaProps } from './step-meta';
 export { StepPorts } from './step-ports';
 export type { StepPortsProps } from './step-ports';
 export { StepSchema } from './step-schema';
 export type { StepSchemaProps } from './step-schema';
-export { StepPlaceholder } from './step-placeholder';
-export type { StepPlaceholderProps } from './step-placeholder';
 export { StepScript } from './step-script';
 export type { StepScriptProps } from './step-script';
 export { StepConfig } from './step-config';
 export type { StepConfigProps } from './step-config';
+export { assetsFromScriptDraft, createSavePipeline, SavePipelineError } from './save-pipeline';
+export type {
+  NodeEditorSavePipeline,
+  SaveAssets,
+  SaveAssembledPackage,
+  SaveImportFace,
+  SavePackageAssembler,
+  SavePackageFileEntry,
+  SavePackageParts,
+  SavePackageScript,
+  SavePipelineDeps,
+  SavePipelineErrorCode,
+  SaveReport,
+} from './save-pipeline';
 export { inject } from './contract-injector';
 export { check } from './syntax-checker';
 export type { ScriptLang, SyntaxError } from './syntax-checker';

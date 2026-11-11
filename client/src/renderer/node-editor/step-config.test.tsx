@@ -159,4 +159,29 @@ describe('与 N3 键一致性（§6.1e——警告不拦截）', () => {
       await unmount(m);
     }
   });
+
+  it('M1 空态抑制：configYaml 空（从未编辑）＋N3 有键→零「形不符」琥珀警告＋空态提示在场', async () => {
+    await act(async () => {
+      useDefinitionDraftStore.getState().openNodeEditor();
+    });
+    useDefinitionDraftStore.getState().setParamsSchema([{ k: 'maxNotes', t: 'number', default: 40 }]);
+    const m = await mountShell();
+    try {
+      await atConfig(m); // configYaml=''（初始空态——diffConfigKeys 判 malformed，但空态抑制不显警告）
+      expect(m.container.querySelector('[data-config-warn]')).toBe(null); // 空态不常显「形不符」（M1）
+      expect(m.container.querySelector('[data-config-empty-hint]')?.textContent).toContain('可选');
+      expect(nextBtn(m).disabled).toBe(false); // 门不受影响
+      // 纯空白（仅空格/换行）同空态；输入实质内容后恢复 diff 警示
+      await act(async () => {
+        setNativeValue(configEditor(m), '   \n  \n');
+      });
+      expect(m.container.querySelector('[data-config-warn]')).toBe(null);
+      await act(async () => {
+        setNativeValue(configEditor(m), 'node: xhs.config\nparams:\n  other: 1\n');
+      });
+      expect(m.container.querySelector('[data-config-warn]')?.textContent).toContain('maxNotes'); // 编辑后恢复失配警示
+    } finally {
+      await unmount(m);
+    }
+  });
 });

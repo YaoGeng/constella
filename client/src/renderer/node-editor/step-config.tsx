@@ -24,7 +24,10 @@ const BTN_CLS = 'rounded-md border border-[var(--line-2)] px-2 py-1 text-[11px] 
 
 export function StepConfig({ type, configYaml, paramsSchema, onConfigChange }: StepConfigProps) {
   const diff = useMemo(() => diffConfigKeys(configYaml, paramsSchema), [configYaml, paramsSchema]);
-  const mismatched = diff.malformed || diff.missing.length > 0 || diff.extra.length > 0;
+  // M1（batch-3 转交 3）空态抑制：configYaml 纯空白（从未编辑/未生成）＝「未配置」而非「形不符」
+  // ——不显琥珀警告（可选资产：不配置不构成失配）；编辑后仍按 diff 逐条警示（§6.1e 不变）。
+  const untouched = configYaml.trim() === '';
+  const mismatched = !untouched && (diff.malformed || diff.missing.length > 0 || diff.extra.length > 0);
 
   return (
     <div data-step-form="config" className="flex flex-col gap-3">
@@ -59,7 +62,14 @@ export function StepConfig({ type, configYaml, paramsSchema, onConfigChange }: S
         className="w-full resize-y rounded-md border border-[var(--line-2)] bg-transparent px-2 py-1.5 font-mono text-[12px] leading-relaxed text-[var(--tx)] placeholder:text-[var(--tx-3)] focus:border-[var(--accent)] focus:outline-none"
       />
 
-      {/* §6.1e 键一致性警告（琥珀=警告级——不拦截环节门/保存） */}
+      {/* M1 空态提示（未配置≠失配——config 为可选资产；可选「按 N3 生成」或直接留空保存） */}
+      {untouched && (
+        <div data-config-empty-hint className="text-[11px] text-[var(--tx-3)]">
+          config 未配置（可选）——留空保存即无 config 条目；可「按 N3 生成默认配置」起步。
+        </div>
+      )}
+
+      {/* §6.1e 键一致性警告（琥珀=警告级——不拦截环节门/保存；空态抑制见上 M1） */}
       {mismatched && (
         <div data-config-warn className="rounded-md border border-[var(--amber)] bg-[rgba(240,179,94,0.06)] px-3 py-2 text-[11px] leading-relaxed text-[var(--amber)]">
           {diff.malformed && <div>config yaml 形不符（缺 params: 段）——N3 已定义键均未配置。</div>}
