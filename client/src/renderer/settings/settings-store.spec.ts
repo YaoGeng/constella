@@ -61,9 +61,10 @@ describe('settingsStore：启动装载+缺省合并（§6.1e）', () => {
     expect(v.heroes && v.stars && v.band && v.pulse && v.meteor && v.sat).toBe(true);
     expect(v.dens_band).toBe(100);
     expect(v.dens_gas).toBe(100);
-    // 非 UI 引用键默认形（X-01：ai/market.baseUrl V1.0 空、ai.route V1.1 空配置）
+    // 非 UI 引用键默认形（X-01：ai/ai.route 空配置；market.baseUrl 默认＝线上广场——2026-11-12
+    // 用户确认 03 §7.3#2 ⚠ 收口，改指 constella.aim8848.com；用户清空该键仍回引导态）
     expect(v.ai).toEqual({ baseUrl: '', apiKeyRef: '' });
-    expect(v['market.baseUrl']).toBe('');
+    expect(v['market.baseUrl']).toBe('https://constella.aim8848.com');
     expect(v['ai.route']).toEqual({ profiles: [], bindings: {}, defaultProfileId: '' });
     expect(useSettingsStore.getState().loaded).toBe(true);
   });

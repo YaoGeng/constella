@@ -314,7 +314,7 @@ describe('MarketApiClient 超时与网络错误分类（离线判定输入）', 
   });
 });
 
-describe('MarketApiClient baseUrl 空（market.baseUrl 默认空——03 §7.3#2）', () => {
+describe('MarketApiClient baseUrl 空（用户清空→引导态；默认值 2026-11-12 起为线上广场——03 §7.3#2 ⚠ 已收口）', () => {
   it('baseUrl 空/空白 → MarketUnconfiguredError 且零外发', async () => {
     const h = makeHarness({ baseUrl: () => '' });
     const client = createMarketApiClient(h.deps);

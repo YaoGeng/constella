@@ -104,7 +104,9 @@ export const DEFAULT_SETTINGS: SettingsSchema = {
   dens_mega: 100,
   dens_gas: 100,
   ai: { baseUrl: '', apiKeyRef: '' },
-  'market.baseUrl': '',
+  // 03 §7.3#2 ⚠ 已收口（2026-11-12 用户确认）：构建期默认改指线上广场 constella.aim8848.com
+  // （首次使用引导仍保留——用户清空该键即回到 MarketUnconfiguredError 引导态）。
+  'market.baseUrl': 'https://constella.aim8848.com',
   'ai.route': { profiles: [], bindings: {}, defaultProfileId: '' },
 };
 

@@ -16,8 +16,9 @@ services:
       dockerfile: server/Dockerfile
     # §6.5 服务器不做构建：镜像由 CI（或直推）分发——见 server/deploy/DEPLOY.md 步 3；
     # 标签=CONSTELLA_VERSION 必填（.env 提供），禁 latest（§6.1）；
-    # registry 前缀待「仓库推送 GitHub」确认门通过后按 DEPLOY.md 步 3 登记补全
-    image: "constella-server:${CONSTELLA_VERSION:?CONSTELLA_VERSION must be set in .env (latest tag forbidden, deploy-standard 6.1)}"
+    # registry=GHCR（部署执行链 2026-11-12 启用——Actions build-server-image.yml 推送，mantis/zfk 同款路径；
+    # DEPLOY.md 步 3 路径 A 登记地址=ghcr.io/yaogeng/constella-server）
+    image: "ghcr.io/yaogeng/constella-server:${CONSTELLA_VERSION:?CONSTELLA_VERSION must be set in .env (latest tag forbidden, deploy-standard 6.1)}"
     # §6.1：所有服务 restart: unless-stopped（spike 版为 no——用后即清口径，生产改回）
     restart: unless-stopped
     # nginx 反代按容器名寻址 constella-server:8051（§5.3 注记——compose 默认名 <project>-<service>-N，

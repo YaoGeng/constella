@@ -53,7 +53,9 @@ chmod 600 /opt/aim/constella/.env                    # 凭据文件，禁止放�
 
 ### 步 3 · 镜像分发与 compose up（§8-3 / §6.5「服务器不做构建，只做拉取与重启」）
 
-**路径 A（首选，依赖【门 1】通过后配置）**：GitHub Actions 按 tag 触发构建并推送镜像仓库（zfk 先例：Actions tag 构建＋冒烟门）；构建命令形=路径 B 同款（仓库根上下文 `-f server/Dockerfile … .`）；随后把 `compose.yml` 的 `image:` 补全 registry 前缀（形 `<REGISTRY>/constella-server:${CONSTELLA_VERSION}`）并在本手册此行登记最终地址。服务器侧 `docker compose pull`。
+**路径 A（首选——✅ 已启用，2026-11-12 用户确认门通过）**：GitHub Actions（`.github/workflows/build-server-image.yml`）按 **tag `server-v<版本>`** 触发构建并推送 GHCR（mantis/zfk 同款路径先例）；**登记镜像地址＝`ghcr.io/yaogeng/constella-server:<版本>`**（compose.yml `image:` 已补全此前缀）；版本与 `.env` 的 `CONSTELLA_VERSION`、发布 tag 三者一致。服务器侧 `docker compose pull`。
+
+> 发布命令形（仓库根）：`git tag server-v<版本> && git push origin server-v<版本>` → Actions 构建（仓库根上下文 `-f server/Dockerfile .`，路径 B 同款）→ 服务器 `cd /opt/aim/constella && docker compose pull && docker compose up -d`。首版=server-v1.0.0（server/package.json version 同步 1.0.0）。
 
 **路径 B（门 1 未过时的直推等价——构建在开发机完成，服务器零构建）**：
 

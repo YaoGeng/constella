@@ -1,8 +1,10 @@
 // 设置键形（X-01 §1 settings 行；01 A-14.1/A-14.2；02 §7.1 settings 表「key TEXT PK; value JSON」）。
 // settings 表为 KV：每行一个键；apiKey 明文只存 safeStorage（02 §12.3），此处只存引用键
 // （ai.apiKeyRef）。键名＝demo 设置面板惯例键（01 A-14.1/A-14.2 验收锚；demo L766-778/L733-746/L1064-1073
-// 参照非权威）；M4 收口增补键＝market.baseUrl（#8⑥，默认空＋首次使用引导——⚠ 默认执行可推翻：
-// B1 部署卡可把构建期默认改指 constella.aim8848.com）与 ai.route（#8⑤，V1.1——B2 前生效）。
+// 参照非权威）；M4 收口增补键＝market.baseUrl（#8⑥，~~默认空＋首次使用引导~~ **✅ ⚠ 已收口
+// （2026-11-12 用户确认，03 §7.3#2 部署卡改值步兑现）：构建期默认=https://constella.aim8848.com**
+// 〔实现在 client settings-store DEFAULT_SETTINGS；用户清空仍回 MarketUnconfiguredError 引导态〕）
+// 与 ai.route（#8⑤，V1.1——B2 前生效）。
 
 /** 场景路由四场景键（✅ M4 #8⑤；C-18 §1 权威清单「工坊规划/流程规划（双工坊两类规划调用，计一场景）、
  * 节点内 ai.llm、图判（多模态）、子代理」；键集合封闭，新场景走扩展点） */
