@@ -79,6 +79,12 @@ docker image prune -f                                 # §6.5#4 健康通过后�
 
 ### 步 4 · nginx conf 安装与 reload（§8-4 / §5.5 四步）
 
+> **⓪ www 挂载（2026-11-12 上线实测补缺——手册漏步）**：新产品含静态 www 时，infra compose 的 aim-nginx volumes 需增挂载（zfk/mantis 有、constella 初版漏——症状=/admin 带凭据 500，`--resolve` 排查定位）：
+> ```bash
+> # /opt/aim/infra/compose.yml aim-nginx volumes 增：- /opt/aim/constella/www:/opt/aim/constella/www:ro
+> # （改前 sudo cp 备份原件；随后 docker compose up -d aim-nginx 重建容器，秒级）
+> ```
+
 ```bash
 # 开发机 → 服务器
 scp server/deploy/nginx/constella.aim8848.com.conf deploy@43.160.219.44:/tmp/constella.conf
